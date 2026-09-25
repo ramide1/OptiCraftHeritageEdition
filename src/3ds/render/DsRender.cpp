@@ -1,0 +1,901 @@
+// DsRender.cpp -- the citro3d half of the 3DS render backend: context, frame
+// lifecycle, render target, vertex staging and the GL-to-PICA state
+// translation. The GL-shaped surface the game drives lives in
+// RenderAPI_CTR_3DS.cpp; the matrix stacks in DsMatrix.cpp; textures in
+// DsTexture.cpp.
+//
+// == Frame lifecycle ==========================================================
+//
+// A colour clear is where a frame starts. Minecraft renders its loading
+// screens from inside the tick (LoadingScreenRenderer draws between two
+// halves of startGame), so there is no single "begin frame" call the backend
+// could hang a present on; instead the game's own rhythm -- clear, draw...,
+// renderSubmitFrame(), swap -- is the only reliable shape. Concretely:
+//
+//   * ds::clear() opens a citro3d frame if there is not one (C3D_FrameBegin
+//     with C3D_FRAME_SYNCDRAW, then C3D_FrameDrawOn installs the target and
+//     its full-target viewport). A mid-frame colour clear does not close
+//     anything: citro3d presents at C3D_FrameEnd, so both the half-drawn
+//     earlier scene and the new one land in the same presented frame -- which
+//     is exactly what the overwriting loading screen wants.
+//   * ds::submitFrame() (renderSubmitFrame, Minecraft.cpp's last draw point)
+//     closes the frame: C3D_FrameEnd queues the display transfer and hands
+//     the command list to the GX queue, asynchronously.
+//   * ds::present() (Display::swapBuffers) closes a frame if one is somehow
+//     still open, then reports whether a frame has been *submitted* since the
+//     last time it said yes. Only a swap that submitted nothing waits for a
+//     VBlank itself: a submitted frame is already paced by the next
+//     C3D_FrameBegin(C3D_FRAME_SYNCDRAW), and stacking a second wait on top
+//     would halve the frame rate during normal play.
+//
+// == Orientation and depth ====================================================
+//
+// The top panel is 400x240, but its framebuffer is stored 240x400: the LCD is
+// scanned sideways. Clip space therefore needs a fixed quarter turn, and the
+// PICA's depth range differs from GL's. Both ride on one matrix, kPicaTilt,
+// pre-multiplied into whatever projection the game sets up -- the same R * D
+// that citro3d's own Mtx_OrthoTilt / Mtx_PerspTilt bake in for their callers,
+// here derived from their source and applied uniformly so the ortho GUI and
+// the perspective world come out right-side up with one shader:
+//
+//   x' =  y          (quarter turn in NDC x/y)
+//   y' = -x
+//   z' = 0.5z - 0.5w (GL clip z [-w,+w] -> PICA [-w,0]; GL near stays at -w)
+//   w' =  w
+//
+// citro3d's C3D_Init then installs C3D_DepthMap(true, -1, 0), which stores
+// depth negated: the near plane becomes the LARGEST stored value and the
+// default depth test is GPU_GREATER. Rather than fight that, the backend
+// keeps it and flips every non-symmetric GL comparison at draw time -- see
+// picaDepthFunc().
+//
+// == Vertex staging ===========================================================
+//
+// The PICA reads vertex data through the physical window at 0x18000000+, so
+// buffers must come from the linear heap (BufInfo_Add rejects anything
+// below it -- the game's own Tessellator allocations never qualify), and the
+// bytes must stay intact from the C3D_DrawArrays call until the command list
+// drains at frame end. Both are satisfied the same way: every mesh is copied
+// into one of a small ring of linear arenas, and the ring is only rewound at
+// C3D_FrameBegin(C3D_FRAME_SYNCDRAW), which by construction waits for the
+// previous frame's queue to finish. Quads -- the Tessellator's primitive --
+// are expanded into triangle pairs on the way in, since the PICA has no quad
+// rasteriser.
+//
+// == Command-buffer pressure ==================================================
+//
+// citro3d records every draw's state reprogramming into one command buffer
+// allocated by C3D_Init, and libctru's GPUCMD_AddInternal svcBreak()s
+// (USERBREAK_PANIC -- a crash, not a dropped draw) the moment a command
+// would no longer fit. A Minecraft frame reprogrammes the full state per
+// Tessellator::draw() -- two 4x4 matrices, depth/alpha/blend/cull, a texture
+// unit and a TexEnv stage, roughly 80-100 words per draw -- and the world
+// pass reaches the default 256 KB budget a few hundred draws in, mid-frame
+// (measured: the first crashing run died at a 66,621-word offset against a
+// 65,536-word buffer, from Tessellator::draw() through C3D_DrawArrays). Two
+// halves keep that from ever happening: the buffer is 1 MB here (see
+// kCommandBufferBytes), and ds::draw() hands the recorded chunk to the GX
+// queue with C3D_FrameSplit when the remaining room runs low -- citro3d's
+// own mechanism for long frames, which continues recording into the rest of
+// the buffer with the GPU state carried across the chunk boundary (the
+// chunks execute in order, at C3D_FrameEnd's gxCmdQueueRun). The arenas are
+// unaffected: their data stays untouched for the whole frame, and the ring is
+// only rewound at the next C3D_FrameBegin(C3D_FRAME_SYNCDRAW), which waits
+// for that queue to drain.
+
+#include "3ds/render/DsRender.h"
+
+#include <3ds.h>
+#include <citro3d.h>
+
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+#include <cstdint>
+
+#include "3ds/render/DsMatrix.h"
+// picasso's -h output: the uniform registers of DsShader.v.pica.
+#include "DsShader_shbin.h"
+// The assembled shader words, embedded by cmake/DsShaderEmbed.cmake (this is
+// the CMake-side stand-in for devkitPro's bin2s + assembler bridge).
+#include "DsShader_shbin_data.h"
+#include "3ds/render/DsTexture.h"
+#include "platform/Log.h"
+
+#if defined(CTR_DUMP_MESHES)
+#include <sys/stat.h>
+#include <unordered_set>
+#endif
+
+namespace ds
+{
+namespace
+{
+
+// Framebuffer (rotated storage) and panel (logical) dimensions.
+constexpr int kTargetWidth = 240;
+constexpr int kTargetHeight = 400;
+constexpr int kPanelWidth = 400;
+constexpr int kPanelHeight = 240;
+
+// The fixed 32-byte Minecraft vertex, loaded as five attributes in order.
+// The colour attribute is u8x4 in R,G,B,A byte order: the Tessellator packs
+// (A<<24)|(B<<16)|(G<<8)|R on this little-endian target (Tessellator.cpp,
+// setColorRGBA), which is that byte sequence, and the PICA normalises
+// integer attribute formats on load -- colour arrives in [0,1], normals in
+// [-1,1] (the fourth normal byte is padding and unread).
+constexpr int kVertexStride = 32;
+constexpr int kAttribCount = 5;
+// Attribute k feeds shader input register k, for all five: 0x43210.
+// (Same nibble convention AttrInfo_AddLoader and BufInfo_Add both use.)
+constexpr u64 kAttribPermutation = 0x43210;
+
+// Staging arenas: see the vertex staging section above. 4 x 16384 vertices is
+// half a megabyte each -- generous for a menu/HUD frame, with wrap-around
+// headroom for denser world frames; the overflow path drops the draw and
+// logs once rather than corrupting one that is still in flight.
+constexpr int kArenaCount = 4;
+constexpr int kArenaVertices = 16384;
+
+// The command buffer citro3d records into, in bytes. C3D_DEFAULT_CMDBUF_SIZE
+// is 0x40000 (256 KB / 65,536 words); a world frame spends ~66K words of
+// full-state reprogramming, so the default is a mid-frame svcBreak -- see the
+// command-buffer pressure section above. 1 MB is still small against the
+// 64 MB Old-3DS application region.
+constexpr u32 kCommandBufferBytes = 0x100000;
+
+// Room that ds::draw() insists on having left in the command buffer before
+// emitting one more draw's state: comfortably above the ~100 words a fully
+// reprogrammed state costs, cheap to check per draw.
+constexpr u32 kCommandReserveWords = 1024;
+
+// RGBA8 target transferred down to the LCD's RGB8 scanout.
+constexpr u32 kDisplayTransferFlags =
+    (GX_TRANSFER_FLIP_VERT(0) | GX_TRANSFER_OUT_TILED(0) | GX_TRANSFER_RAW_COPY(0) |
+     GX_TRANSFER_IN_FORMAT(GX_TRANSFER_FMT_RGBA8) |
+     GX_TRANSFER_OUT_FORMAT(GX_TRANSFER_FMT_RGB8) |
+     GX_TRANSFER_SCALING(GX_TRANSFER_SCALE_NO));
+
+// T = R * D, in GL column-major layout. See the orientation section above;
+// the full derivation lives in DsShader.v.pica's header comment.
+constexpr float kPicaTilt[16] = {
+	 0.0f, -1.0f,  0.0f, 0.0f, // column 0
+	 1.0f,  0.0f,  0.0f, 0.0f, // column 1
+	 0.0f,  0.0f,  0.5f, 0.0f, // column 2
+	 0.0f,  0.0f, -0.5f, 1.0f, // column 3
+};
+
+bool s_c3dActive = false;
+C3D_RenderTarget* s_target = nullptr;
+DVLB_s* s_dvlb = nullptr;
+shaderProgram_s s_program;
+bool s_programReady = false;
+
+bool s_inFrame = false;
+u32 s_framesSubmitted = 0;
+u32 s_framesPresented = 0;
+
+void* s_arenas[kArenaCount] = {};
+int s_arenaIndex = 0;
+int s_arenaCursor = 0;
+bool s_arenaOverflowLogged = false;
+
+float s_clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+double s_clearDepth = 1.0;
+int s_viewport[4] = {0, 0, kPanelWidth, kPanelHeight};
+
+float clamp01(float v)
+{
+	return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+}
+
+// out = left * right, all column-major GL float[16]s.
+void matrixMultiply(float* out, const float* left, const float* right)
+{
+	float tmp[16];
+	for (int c = 0; c < 4; ++c)
+	{
+		for (int r = 0; r < 4; ++r)
+		{
+			float sum = 0.0f;
+			for (int k = 0; k < 4; ++k)
+				sum += left[k * 4 + r] * right[c * 4 + k];
+			tmp[c * 4 + r] = sum;
+		}
+	}
+	std::memcpy(out, tmp, sizeof(tmp));
+}
+
+// GL column-major -> citro3d's rows: r[i] is mathematical row i, so element
+// (i, c) of the GL matrix is r[i]'s member for column c. Assigning by member
+// name (never by flat index -- C3D_FVec stores w,z,y,x in memory) is exactly
+// how citro3d's own Mtx_Ortho family builds its matrices, which is what makes
+// the member-name comparison against Mtx_OrthoTilt that derived kPicaTilt
+// trustworthy.
+void toC3dMtx(C3D_Mtx* out, const float* gl)
+{
+	for (int i = 0; i < 4; ++i)
+	{
+		out->r[i].x = gl[0 * 4 + i]; // element (i, 0)
+		out->r[i].y = gl[1 * 4 + i]; // element (i, 1)
+		out->r[i].z = gl[2 * 4 + i]; // element (i, 2)
+		out->r[i].w = gl[3 * 4 + i]; // element (i, 3)
+	}
+}
+
+// GL depth comparisons are "0=near, 1=far"; citro3d's negated storage makes
+// near the largest value, so the symmetric functions keep their names and
+// the ordered ones swap partners. (LESS keeps GL's "smaller wins = nearer
+// wins" meaning -- expressed as GREATER over the stored values.)
+GPU_TESTFUNC picaDepthFunc(RenderCompare func)
+{
+	switch (func)
+	{
+	case RenderCompare::Never:       return GPU_NEVER;
+	case RenderCompare::Less:         return GPU_GREATER;
+	case RenderCompare::Equal:        return GPU_EQUAL;
+	case RenderCompare::LessEqual:    return GPU_GEQUAL;
+	case RenderCompare::Greater:      return GPU_LESS;
+	case RenderCompare::NotEqual:     return GPU_NOTEQUAL;
+	case RenderCompare::GreaterEqual: return GPU_LEQUAL;
+	case RenderCompare::Always:      return GPU_ALWAYS;
+	}
+	return GPU_ALWAYS;
+}
+
+// The alpha test compares the final fragment alpha, which lives in the same
+// [0,1] terms on both sides -- no depth-map flip here.
+GPU_TESTFUNC picaAlphaFunc(RenderCompare func)
+{
+	switch (func)
+	{
+	case RenderCompare::Never:       return GPU_NEVER;
+	case RenderCompare::Less:         return GPU_LESS;
+	case RenderCompare::Equal:        return GPU_EQUAL;
+	case RenderCompare::LessEqual:    return GPU_LEQUAL;
+	case RenderCompare::Greater:      return GPU_GREATER;
+	case RenderCompare::NotEqual:     return GPU_NOTEQUAL;
+	case RenderCompare::GreaterEqual: return GPU_GEQUAL;
+	case RenderCompare::Always:       return GPU_ALWAYS;
+	}
+	return GPU_ALWAYS;
+}
+
+GPU_BLENDFACTOR picaBlendFactor(RenderBlendFactor factor)
+{
+	switch (factor)
+	{
+	case RenderBlendFactor::Zero:              return GPU_ZERO;
+	case RenderBlendFactor::One:               return GPU_ONE;
+	case RenderBlendFactor::SrcColor:          return GPU_SRC_COLOR;
+	case RenderBlendFactor::OneMinusSrcColor:   return GPU_ONE_MINUS_SRC_COLOR;
+	case RenderBlendFactor::SrcAlpha:          return GPU_SRC_ALPHA;
+	case RenderBlendFactor::OneMinusSrcAlpha:  return GPU_ONE_MINUS_SRC_ALPHA;
+	case RenderBlendFactor::DstAlpha:          return GPU_DST_ALPHA;
+	case RenderBlendFactor::OneMinusDstAlpha:  return GPU_ONE_MINUS_DST_ALPHA;
+	case RenderBlendFactor::DstColor:          return GPU_DST_COLOR;
+	case RenderBlendFactor::OneMinusDstColor:  return GPU_ONE_MINUS_DST_COLOR;
+	}
+	return GPU_ONE;
+}
+
+// The PICA culls a named winding, and its "front" (GPU_CULL_FRONT_CCW) is
+// counter-clockwise -- GL's own default front face, and kPicaTilt is a pure
+// rotation (positive determinant), so winding survives the turn intact.
+// GL_FRONT_AND_BACK has no PICA equivalent: the closest honest answer is to
+// cull one face, which no game path currently asks for anyway.
+GPU_CULLMODE picaCullMode(RenderFace face)
+{
+	switch (face)
+	{
+	case RenderFace::Front:       return GPU_CULL_FRONT_CCW;
+	case RenderFace::Back:        return GPU_CULL_BACK_CCW;
+	case RenderFace::FrontAndBack: return GPU_CULL_FRONT_CCW;
+	}
+	return GPU_CULL_NONE;
+}
+
+void endFrame()
+{
+	if (!s_inFrame)
+		return;
+	C3D_FrameEnd(0);
+	s_inFrame = false;
+	++s_framesSubmitted;
+}
+
+// Open a citro3d frame if there is not one. SYNCDRAW is what makes the arena
+// ring safe: C3D_FrameBegin waits for the previous queue to drain before
+// letting the frame start, so the arenas can be rewound here.
+void frameBegin()
+{
+	if (s_inFrame || s_target == nullptr)
+		return;
+	if (!C3D_FrameBegin(C3D_FRAME_SYNCDRAW))
+		return;
+	if (!C3D_FrameDrawOn(s_target))
+	{
+		C3D_FrameEnd(0);
+		return;
+	}
+	s_inFrame = true;
+	s_arenaIndex = 0;
+	s_arenaCursor = 0;
+}
+
+// Reserve `vertices` slots in the arena ring, wrapping to the next arena when
+// the current one cannot hold the draw. Null (and one logged line) when the
+// whole frame's ring is full -- see the staging section above.
+u8* reserveArena(int vertices)
+{
+	if (vertices > kArenaVertices)
+	{
+		if (!s_arenaOverflowLogged)
+		{
+			s_arenaOverflowLogged = true;
+			MC_LOG_WARN("render",
+				"3ds: draw with %d vertices exceeds one arena (%d); dropped\n",
+				vertices, kArenaVertices);
+		}
+		return nullptr;
+	}
+	if (s_arenaCursor + vertices > kArenaVertices)
+	{
+		if (s_arenaIndex + 1 >= kArenaCount)
+		{
+			if (!s_arenaOverflowLogged)
+			{
+				s_arenaOverflowLogged = true;
+				MC_LOG_WARN("render",
+					"3ds: vertex arenas exhausted for this frame (%d x %d vertices); draws dropped\n",
+					kArenaCount, kArenaVertices);
+			}
+			return nullptr;
+		}
+		++s_arenaIndex;
+		s_arenaCursor = 0;
+	}
+	u8* out = static_cast<u8*>(s_arenas[s_arenaIndex]) +
+	          static_cast<std::size_t>(s_arenaCursor) * kVertexStride;
+	s_arenaCursor += vertices;
+	return out;
+}
+
+// Submit the recorded chunk to the GX queue and keep recording into the rest
+// of the buffer once the remaining room no longer covers one more draw's
+// state. GPU state is continuous across the boundary (the chunks execute in
+// order), and the staged arenas stay valid for the whole frame -- see the
+// command-buffer pressure section of the header. GPUCMD_GetBuffer is the
+// libctru accessor for the current chunk's size and fill level; <3ds.h>
+// already pulls it in.
+void splitCommandBufferIfNeeded()
+{
+	u32* address = nullptr;
+	u32 size = 0;
+	u32 offset = 0;
+	GPUCMD_GetBuffer(&address, &size, &offset);
+	if (offset + kCommandReserveWords > size)
+		C3D_FrameSplit(0);
+}
+
+#if defined(CTR_DUMP_MESHES)
+// The mesh dump diagnostic (cmake option 3DS_DUMP_MESHES): the first draw
+// of every texture id has its interleaved vertices written out as text
+// under sdmc:/opticraft/dumps/mesh_tex_<id>.txt -- position, UV and vertex
+// colour exactly as they reach the GPU. Paired with the texture PNG dumps
+// (and the source PNGs), this pins an orientation report to one side of the
+// pipeline with no guesswork: the UV values in the file are the game's own
+// quad math, so a UV that maps the top of the screen to v=0 while the
+// texture is stored upright names the draw path; UVs that already carry the
+// inverted mapping name the shared code that built the quad.
+void dumpMeshOnce(int texture, const RenderInterleavedMesh& mesh, const GpuState& state)
+{
+	static std::unordered_set<int> s_seen;
+	if (!s_seen.insert(texture).second)
+		return;
+
+	::mkdir("sdmc:/opticraft", 0777);
+	::mkdir("sdmc:/opticraft/dumps", 0777);
+	char path[96];
+	std::snprintf(path, sizeof(path), "sdmc:/opticraft/dumps/mesh_tex_%d.txt", texture);
+	std::FILE* file = std::fopen(path, "w");
+	if (file == nullptr)
+		return;
+	std::fprintf(file, "texture=%d primitive=%d count=%d stride=%d textured=%d blend=%d depthTest=%d\n",
+	             texture, renderPrimitiveValue(mesh.primitive), mesh.count, mesh.stride,
+	             state.texture2d ? 1 : 0, state.blend ? 1 : 0, state.depthTest ? 1 : 0);
+	const std::uint8_t* base = static_cast<const std::uint8_t*>(mesh.data) +
+	                           static_cast<std::size_t>(mesh.first) * mesh.stride;
+	for (int i = 0; i < mesh.count; ++i)
+	{
+		const std::uint8_t* v = base + static_cast<std::size_t>(i) * mesh.stride;
+		const float* position = reinterpret_cast<const float*>(v);
+		const float* texcoord = reinterpret_cast<const float*>(v + 12);
+		const std::uint32_t color = *reinterpret_cast<const std::uint32_t*>(v + 20);
+		std::fprintf(file, "v%d pos=%.4f,%.4f,%.4f uv=%.6f,%.6f color=%08lX\n",
+		             i, position[0], position[1], position[2],
+		             texcoord[0], texcoord[1], static_cast<unsigned long>(color));
+	}
+	std::fclose(file);
+}
+#endif // CTR_DUMP_MESHES
+
+// Translate the GL-shaped state into citro3d calls and point the vertex fetch
+// at the staged copy. citro3d flushes all of this per C3D_DrawArrays, so this
+// is safe to call with different values for every draw in a frame.
+void applyState(const GpuState& state, const void* vertexBase)
+{
+	// Depth: the PICA's writemask covers colour *and* depth writes (there is
+	// no separate glColorMask), and 0 -- "write nothing" -- is a value the
+	// hardware accepts, matching glColorMask(f,f,f,f)+glDepthMask(f).
+	u32 writeMask = 0;
+	if (state.colorWriteR) writeMask |= GPU_WRITE_RED;
+	if (state.colorWriteG) writeMask |= GPU_WRITE_GREEN;
+	if (state.colorWriteB) writeMask |= GPU_WRITE_BLUE;
+	if (state.colorWriteA) writeMask |= GPU_WRITE_ALPHA;
+	if (state.depthWrite)  writeMask |= GPU_WRITE_DEPTH;
+	C3D_DepthTest(state.depthTest, picaDepthFunc(state.depthFunc),
+	              static_cast<GPU_WRITEMASK>(writeMask));
+
+	C3D_AlphaTest(state.alphaTest, picaAlphaFunc(state.alphaFunc),
+	              static_cast<int>(clamp01(state.alphaRef) * 255.0f + 0.5f));
+	C3D_CullFace(state.cullFace ? picaCullMode(state.cullFaceMode) : GPU_CULL_NONE);
+
+	// No blend-enable switch exists through citro3d's surface, so a disabled
+	// blend is spelled as the identity factors instead of whatever the last
+	// enabled draw happened to leave behind.
+	const GPU_BLENDFACTOR srcFactor =
+		state.blend ? picaBlendFactor(state.blendSrc) : GPU_ONE;
+	const GPU_BLENDFACTOR dstFactor =
+		state.blend ? picaBlendFactor(state.blendDst) : GPU_ZERO;
+	C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, srcFactor, dstFactor,
+	               srcFactor, dstFactor);
+
+	// Matrices: the tilt rides on the projection, the model-view goes
+	// through as-is (the shader applies projection * modelView * position).
+	float tilted[16];
+	matrixMultiply(tilted, kPicaTilt, matrix::projectionTop());
+	C3D_Mtx projection;
+	C3D_Mtx modelView;
+	toC3dMtx(&projection, tilted);
+	toC3dMtx(&modelView, matrix::modelViewTop());
+	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, VSH_FVEC_projection, &projection);
+	C3D_FVUnifMtx4x4(GPU_VERTEX_SHADER, VSH_FVEC_modelView, &modelView);
+
+	// Texture: bind and hand the shader the padding ratio. An untextured
+	// draw leaves the binding alone -- stage 0 below simply does not read it.
+	float uvScale[2] = {1.0f, 1.0f};
+	if (state.texture2d)
+		texture::bind(state.boundTexture, uvScale);
+	C3D_FVUnifSet(GPU_VERTEX_SHADER, VSH_FVEC_texScale,
+	              uvScale[0], uvScale[1], 1.0f, 1.0f);
+
+	// TexEnv stage 0: texel * vertex colour when texturing, vertex colour
+	// alone when not. Stages 1..5 stay the pass-through their init-time
+	// C3D_TexEnvInit left them as.
+	C3D_TexEnv* env = C3D_GetTexEnv(0);
+	C3D_TexEnvInit(env);
+	if (state.texture2d)
+	{
+		C3D_TexEnvSrc(env, C3D_Both, GPU_TEXTURE0, GPU_PRIMARY_COLOR,
+		              GPU_PRIMARY_COLOR);
+		C3D_TexEnvFunc(env, C3D_Both, GPU_MODULATE);
+	}
+	else
+	{
+		C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, GPU_PRIMARY_COLOR,
+		              GPU_PRIMARY_COLOR);
+		C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+	}
+
+	// Vertex fetch: one buffer, five attributes, the fixed stride.
+	C3D_BufInfo* bufInfo = C3D_GetBufInfo();
+	BufInfo_Init(bufInfo);
+	BufInfo_Add(bufInfo, vertexBase, kVertexStride, kAttribCount,
+	            kAttribPermutation);
+}
+
+#if defined(CTR_RENDER_PROBE)
+// The orientation probe (cmake option 3DS_RENDER_PROBE): four vertex-coloured
+// corner squares drawn through the live pipeline every frame -- red at the
+// GUI's top-left, green top-right, blue bottom-left, yellow bottom-right.
+// Whichever panel corner each colour lands in names the transform actually
+// applied, no matter how garbled everything else is: all four in place says
+// the tilt is right and any remaining "flipped" impression came from the
+// corrupted frames the other fixes in this change address; a 180-degree swap
+// or a mirror says the tilt needs the matching sign fix before the port is
+// playable where it was measured.
+//
+// It borrows the game's draw path wholesale (staging, quad expansion, the
+// tilt), but with matrices of its own: a push/loadIdentity/ortho pair on both
+// stacks -- the same sequence the game itself would issue -- restored exactly
+// on the way out, so nothing of the probe leaks into the game's next frame
+// (and every draw re-uploads the full state anyway; see applyState).
+void drawOrientationProbe()
+{
+	if (!s_inFrame)
+		return; // Nothing was drawn this frame; the probe cannot open one.
+
+	// The fixed 32-byte Minecraft vertex layout, in probe-local form. The
+	// colour packs (A<<24)|(B<<16)|(G<<8)|R exactly like the Tessellator's
+	// setColorRGBA: memory bytes R,G,B,A, which attribute fetch loads in
+	// order (no texture-format byte swap on this path; see DsTexture.cpp).
+	struct ProbeVertex
+	{
+		float position[3];
+		float texcoord[2];
+		std::uint32_t color;
+		std::uint8_t normal[4];
+		float brightness;
+	};
+	static_assert(sizeof(ProbeVertex) == kVertexStride,
+	              "the probe must use the fixed vertex layout");
+
+	const auto quad = [](ProbeVertex* out, float x0, float y0, float x1,
+	                     float y1, std::uint32_t rgba)
+	{
+		for (int corner = 0; corner < 4; ++corner)
+		{
+			out[corner].position[0] = (corner & 1) != 0 ? x1 : x0;
+			out[corner].position[1] = (corner & 2) != 0 ? y1 : y0;
+			out[corner].position[2] = 0.0f;
+			out[corner].texcoord[0] = 0.0f;
+			out[corner].texcoord[1] = 0.0f;
+			out[corner].color = rgba;
+			out[corner].normal[0] = 0;
+			out[corner].normal[1] = 0;
+			out[corner].normal[2] = 0;
+			out[corner].normal[3] = 0;
+			out[corner].brightness = 1.0f;
+		}
+	};
+
+	constexpr float kSize = 48.0f;
+	constexpr float kRight = static_cast<float>(kPanelWidth);
+	constexpr float kBottom = static_cast<float>(kPanelHeight);
+	ProbeVertex vertices[4 * 4];
+	quad(vertices + 0, 0.0f, 0.0f, kSize, kSize, 0xFF0000FFu);          // red
+	quad(vertices + 4, kRight - kSize, 0.0f, kRight, kSize, 0xFF00FF00u); // green
+	quad(vertices + 8, 0.0f, kBottom - kSize, kSize, kBottom, 0xFFFF0000u); // blue
+	quad(vertices + 12, kRight - kSize, kBottom - kSize, kRight, kBottom,
+	     0xFF00FFFFu);                                                  // yellow
+
+	RenderInterleavedMesh mesh;
+	mesh.data = vertices;
+	mesh.stride = kVertexStride;
+	mesh.first = 0;
+	mesh.count = 16;
+	mesh.primitive = RenderPrimitive::Quads;
+	mesh.positionShort = false;
+	mesh.hasColor = true;
+	mesh.colorOffset = 20;
+	mesh.texCoordOffset = 12;
+	mesh.normalOffset = 24;
+	mesh.brightnessOffset = 28;
+
+	// Untextured, unblended, depth-blind squares: whatever the game's last
+	// state was, the probe's own has nothing that can hide it.
+	GpuState probeState;
+	probeState.depthWrite = false;
+
+	const RenderMatrixMode previousMode = matrix::currentMode();
+	matrix::setMode(RenderMatrixMode::Projection);
+	matrix::push();
+	matrix::loadIdentity();
+	matrix::ortho(0.0, kPanelWidth, kPanelHeight, 0.0, -1.0, 1.0);
+	matrix::setMode(RenderMatrixMode::ModelView);
+	matrix::push();
+	matrix::loadIdentity();
+
+	draw(mesh, probeState);
+
+	matrix::setMode(RenderMatrixMode::ModelView);
+	matrix::pop();
+	matrix::setMode(RenderMatrixMode::Projection);
+	matrix::pop();
+	matrix::setMode(previousMode);
+}
+#endif // CTR_RENDER_PROBE
+
+} // namespace
+
+bool init()
+{
+	if (s_c3dActive)
+		return s_target != nullptr;
+
+	if (!C3D_Init(kCommandBufferBytes))
+	{
+		MC_LOG_ERROR("render", "3ds: C3D_Init failed\n");
+		return false;
+	}
+	s_c3dActive = true;
+
+	// DVLB_ParseFile walks the SHBIN container's own offsets -- the size
+	// argument is unused by libctru -- but the cast is still needed: the
+	// shader sits in .rodata and the API predates const-correctness.
+	s_dvlb = DVLB_ParseFile(const_cast<u32*>(DsShader_shbin),
+	                        static_cast<u32>(DsShader_shbin_size * 4));
+	if (s_dvlb == nullptr)
+	{
+		MC_LOG_ERROR("render", "3ds: DVLB_ParseFile rejected the vertex shader\n");
+		fini();
+		return false;
+	}
+	Result result = shaderProgramInit(&s_program);
+	if (R_FAILED(result))
+	{
+		MC_LOG_ERROR("render", "3ds: shaderProgramInit failed (%08lx)\n", result);
+		fini();
+		return false;
+	}
+	s_programReady = true;
+	result = shaderProgramSetVsh(&s_program, &s_dvlb->DVLE[0]);
+	if (R_FAILED(result))
+	{
+		MC_LOG_ERROR("render", "3ds: shaderProgramSetVsh failed (%08lx)\n", result);
+		fini();
+		return false;
+	}
+	C3D_BindProgram(&s_program);
+
+	// Fixed 32-byte vertex -> five attribute loaders. One configuration for
+	// the whole backend: the layout is as much a part of the mesh contract as
+	// the stride is.
+	C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
+	AttrInfo_Init(attrInfo);
+	AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3);         // position
+	AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 2);         // texcoord
+	AttrInfo_AddLoader(attrInfo, 2, GPU_UNSIGNED_BYTE, 4);  // colour RGBA
+	AttrInfo_AddLoader(attrInfo, 3, GPU_BYTE, 4);          // normal xyz + pad
+	AttrInfo_AddLoader(attrInfo, 4, GPU_FLOAT, 1);         // brightness
+
+	// Pin every TexEnv stage to its pass-through default, so stage 0 is the
+	// only one this backend ever has to think about.
+	for (int i = 0; i < 6; ++i)
+	{
+		C3D_TexEnv* env = C3D_GetTexEnv(i);
+		C3D_TexEnvInit(env);
+	}
+
+	s_target = C3D_RenderTargetCreate(kTargetWidth, kTargetHeight,
+	                                  GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
+	if (s_target == nullptr)
+	{
+		MC_LOG_ERROR("render", "3ds: C3D_RenderTargetCreate(%dx%d) failed\n",
+		             kTargetWidth, kTargetHeight);
+		fini();
+		return false;
+	}
+	C3D_RenderTargetSetOutput(s_target, GFX_TOP, GFX_LEFT, kDisplayTransferFlags);
+
+	// GL fixed-function defaults. citro3d's own defaults differ (depth test
+	// on, GREATER, with the negated depth map); the depth *function* here is
+	// deliberately GREATER-shaped because the negated storage is being kept
+	// -- see picaDepthFunc().
+	C3D_DepthTest(false, GPU_GREATER, GPU_WRITE_ALL);
+	C3D_AlphaTest(false, GPU_ALWAYS, 0);
+	C3D_CullFace(GPU_CULL_NONE);
+	C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO,
+	               GPU_ONE, GPU_ZERO);
+
+	for (auto& arena : s_arenas)
+	{
+		arena = linearAlloc(static_cast<std::size_t>(kArenaVertices) * kVertexStride);
+		if (arena == nullptr)
+		{
+			MC_LOG_ERROR("render", "3ds: vertex arena allocation failed\n");
+			fini();
+			return false;
+		}
+	}
+	s_arenaIndex = 0;
+	s_arenaCursor = 0;
+
+	MC_LOG_INFO("render",
+		"3ds: citro3d up -- target %dx%d RGBA8/D24S8, %d arenas x %d vertices\n",
+		kTargetWidth, kTargetHeight, kArenaCount, kArenaVertices);
+	return true;
+}
+
+void fini()
+{
+	if (!s_c3dActive)
+		return;
+	endFrame();
+	for (auto& arena : s_arenas)
+	{
+		if (arena != nullptr)
+		{
+			linearFree(arena);
+			arena = nullptr;
+		}
+	}
+	texture::resetAll();
+	if (s_target != nullptr)
+	{
+		C3D_RenderTargetDelete(s_target);
+		s_target = nullptr;
+	}
+	if (s_programReady)
+	{
+		shaderProgramFree(&s_program);
+		s_programReady = false;
+	}
+	if (s_dvlb != nullptr)
+	{
+		DVLB_Free(s_dvlb);
+		s_dvlb = nullptr;
+	}
+	C3D_Fini();
+	s_c3dActive = false;
+}
+
+void submitFrame()
+{
+#if defined(CTR_RENDER_PROBE)
+	drawOrientationProbe();
+#endif
+	endFrame();
+}
+
+bool present()
+{
+	endFrame();
+	if (s_framesPresented != s_framesSubmitted)
+	{
+		s_framesPresented = s_framesSubmitted;
+		return true;
+	}
+	return false;
+}
+
+void setClearColor(float r, float g, float b, float a)
+{
+	s_clearColor[0] = r;
+	s_clearColor[1] = g;
+	s_clearColor[2] = b;
+	s_clearColor[3] = a;
+}
+
+void setClearDepth(double depth)
+{
+	s_clearDepth = depth;
+}
+
+void clear(unsigned mask)
+{
+	if (s_target == nullptr)
+		return;
+	u32 bits = 0;
+	if (mask & RenderClearMask::Color)
+		bits |= C3D_CLEAR_COLOR;
+	if (mask & RenderClearMask::Depth)
+		bits |= C3D_CLEAR_DEPTH;
+	if (bits == 0)
+		return;
+
+	frameBegin();
+	if (!s_inFrame)
+		return;
+
+	// GL's float clear colour packs into citro3d's 0xRRGGBBAA fill value;
+	// GL's 0..1 clear depth (0 = near, 1 = far) has to be negated to match
+	// the stored depth map, which is why far (the usual request) becomes 0 --
+	// the same value citro3d's own examples clear to.
+	const u32 color =
+	    (static_cast<u32>(clamp01(s_clearColor[0]) * 255.0f + 0.5f) << 24) |
+	    (static_cast<u32>(clamp01(s_clearColor[1]) * 255.0f + 0.5f) << 16) |
+	    (static_cast<u32>(clamp01(s_clearColor[2]) * 255.0f + 0.5f) << 8) |
+	     static_cast<u32>(clamp01(s_clearColor[3]) * 255.0f + 0.5f);
+	const float depth = static_cast<float>(s_clearDepth);
+	const u32 storedDepth =
+		static_cast<u32>((1.0f - depth) * 16777215.0f + 0.5f);
+	C3D_RenderTargetClear(s_target, static_cast<C3D_ClearBits>(bits), color,
+	                      storedDepth);
+}
+
+void setViewport(int x, int y, int width, int height)
+{
+	// Recorded only: the GPU viewport is the full rotated target, installed
+	// by C3D_FrameDrawOn. Every viewport the game asks for is the full screen
+	// (Minecraft, EntityRenderer, GuiAchievement) -- except GuiEnchantment's
+	// 320x240 book window, which is not on this milestone's path and would
+	// need the logical->rotated rectangle transform once it is.
+	s_viewport[0] = x;
+	s_viewport[1] = y;
+	s_viewport[2] = width;
+	s_viewport[3] = height;
+}
+
+void getViewport(int* values)
+{
+	if (values != nullptr)
+	{
+		values[0] = s_viewport[0];
+		values[1] = s_viewport[1];
+		values[2] = s_viewport[2];
+		values[3] = s_viewport[3];
+	}
+}
+
+bool draw(const RenderInterleavedMesh& mesh, const GpuState& state)
+{
+	if (mesh.data == nullptr || mesh.count <= 0)
+		return true; // Nothing to do, and the layout is representable.
+	if (mesh.positionShort || mesh.stride != kVertexStride)
+		return false; // The fixed five-attribute order covers exactly this.
+
+	GPU_Primitive_t primitive = GPU_TRIANGLES;
+	bool quads = false;
+	switch (mesh.primitive)
+	{
+	case RenderPrimitive::Triangles:
+		primitive = GPU_TRIANGLES;
+		break;
+	case RenderPrimitive::TriangleStrip:
+		primitive = GPU_TRIANGLE_STRIP;
+		break;
+	case RenderPrimitive::TriangleFan:
+		primitive = GPU_TRIANGLE_FAN;
+		break;
+	case RenderPrimitive::Quads:
+		primitive = GPU_TRIANGLES; // Expanded below: the PICA has no quads.
+		quads = true;
+		break;
+	default:
+		// The PICA200 has no point or line rasteriser. The callers that use
+		// them (the block-selection outline, debug geometry) already guard on
+		// this returning false, the same answer the PS2/Wii would give for a
+		// primitive they cannot express.
+		return false;
+	}
+
+	const int quadCount = quads ? mesh.count / 4 : 0;
+	if (quads && quadCount == 0)
+		return true; // Fewer than four vertices cannot form even one quad.
+	const int outCount = quads ? quadCount * 6 : mesh.count;
+
+#if defined(CTR_DUMP_MESHES)
+	dumpMeshOnce(state.texture2d ? state.boundTexture : -1, mesh, state);
+#endif
+
+	frameBegin();
+	if (s_target == nullptr || !s_inFrame)
+		return false; // The renderer never came up; nothing can land.
+
+	u8* staging = reserveArena(outCount);
+	if (staging == nullptr)
+		return false;
+
+	const u8* src = static_cast<const u8*>(mesh.data) +
+	                static_cast<std::size_t>(mesh.first) * kVertexStride;
+	if (quads)
+	{
+		// The same fan split GL's GL_QUADS rasterises with -- (0,1,2) and
+		// (0,2,3) -- so winding (and therefore culling) sees identical
+		// faces to the desktop renderer.
+		for (int q = 0; q < quadCount; ++q)
+		{
+			u8* out = staging + static_cast<std::size_t>(q) * 6 * kVertexStride;
+			const u8* in = src + static_cast<std::size_t>(q) * 4 * kVertexStride;
+			std::memcpy(out + 0 * kVertexStride, in + 0 * kVertexStride, kVertexStride);
+			std::memcpy(out + 1 * kVertexStride, in + 1 * kVertexStride, kVertexStride);
+			std::memcpy(out + 2 * kVertexStride, in + 2 * kVertexStride, kVertexStride);
+			std::memcpy(out + 3 * kVertexStride, in + 0 * kVertexStride, kVertexStride);
+			std::memcpy(out + 4 * kVertexStride, in + 2 * kVertexStride, kVertexStride);
+			std::memcpy(out + 5 * kVertexStride, in + 3 * kVertexStride, kVertexStride);
+		}
+	}
+	else
+	{
+		std::memcpy(staging, src, static_cast<std::size_t>(outCount) * kVertexStride);
+	}
+
+	splitCommandBufferIfNeeded();
+	applyState(state, staging);
+	C3D_DrawArrays(primitive, 0, outCount);
+	return true;
+}
+
+} // namespace ds

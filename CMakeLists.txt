@@ -49,6 +49,15 @@ endif()
 
 enable_testing()
 
+# Nintendo 3DS build. cmake/3ds_toolchain.cmake (wired in by the 3ds-* presets)
+# defines NINTENDO_3DS; -DPLATFORM=3DS works too. Same shape as the Wii branch:
+# cmake/3ds.cmake builds its own target and return()s, so none of the desktop
+# SDL2/glad/OpenGL configuration below runs.
+if(NINTENDO_3DS OR (DEFINED PLATFORM AND PLATFORM STREQUAL "3DS"))
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/3ds.cmake)
+    return()
+endif()
+
 function(opticraft_add_optional_test target test_source)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${test_source}")
         message(STATUS "${target} skipped: ${test_source} is not available in this source package")

@@ -7,6 +7,11 @@
 //                          gsKit/GLES wrapper, PS2SDK, VU/GS, etc.
 //   PLATFORM_WII        -> Nintendo Wii only. Use for WPAD/PAD, libfat paths,
 //                          the GX wrapper, libogc, ASND, MEM1/MEM2, etc.
+//   PLATFORM_3DS        -> Nintendo 3DS only. Use for circle pad/touch, libctru,
+//                          the citro2d/citro3d wrapper, ndsp, sdmc paths, etc.
+//                          The identifier cannot start with a digit, so the code
+//                          macro stays CTR_PLATFORM (defined by the toolchain)
+//                          while this is its feature-switch spelling.
 //
 // Use feature/profile checks for game-side compromises. There are TWO, and the
 // split matters -- see the PLATFORM_BOUNDED_WORLD block further down:
@@ -37,6 +42,14 @@
 #  endif
 #endif
 
+#ifndef PLATFORM_3DS
+#  if defined(CTR_PLATFORM)
+#    define PLATFORM_3DS 1
+#  else
+#    define PLATFORM_3DS 0
+#  endif
+#endif
+
 // User-facing hardware calibration features.
 #ifndef PLATFORM_HAS_CONTROLLER_CALIBRATION
 #  define PLATFORM_HAS_CONTROLLER_CALIBRATION (PLATFORM_PS2 || PLATFORM_WII)
@@ -64,7 +77,7 @@
 // A bounded-world concern, not a CPU one: without it the Wii unloads the
 // dragon with its chunk the moment it flies past the cache radius.
 #ifndef PLATFORM_ENTITY_CHUNK_RETENTION
-#  define PLATFORM_ENTITY_CHUNK_RETENTION (PLATFORM_PS2 || PLATFORM_WII)
+#  define PLATFORM_ENTITY_CHUNK_RETENTION (PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS)
 #endif
 
 // java.util.Random's 48-bit LCG step as 32-bit multiplies (see Random::next).
@@ -87,19 +100,19 @@
 // probe alone is ~520 optional files x several spellings of failed opens on
 // every RenderEngine (re)load -- a FAT directory walk each over USB/SD.
 #ifndef PLATFORM_OPTIFINE_CUSTOM_ANIMATIONS
-#  define PLATFORM_OPTIFINE_CUSTOM_ANIMATIONS (!(PLATFORM_PS2 || PLATFORM_WII))
+#  define PLATFORM_OPTIFINE_CUSTOM_ANIMATIONS (!(PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS))
 #endif
 
 #ifndef PLATFORM_OPTIFINE_RANDOM_MOBS
-#  define PLATFORM_OPTIFINE_RANDOM_MOBS (!(PLATFORM_PS2 || PLATFORM_WII))
+#  define PLATFORM_OPTIFINE_RANDOM_MOBS (!(PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS))
 #endif
 
 #ifndef PLATFORM_OPTIFINE_CUSTOM_FONTS
-#  define PLATFORM_OPTIFINE_CUSTOM_FONTS (!(PLATFORM_PS2 || PLATFORM_WII))
+#  define PLATFORM_OPTIFINE_CUSTOM_FONTS (!(PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS))
 #endif
 
 #ifndef PLATFORM_LOCAL_STATS
-#  define PLATFORM_LOCAL_STATS (PLATFORM_PS2 || PLATFORM_WII)
+#  define PLATFORM_LOCAL_STATS (PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS)
 #endif
 
 #ifndef PLATFORM_ENUMERATE_SAVE_DIRECTORIES
@@ -107,7 +120,7 @@
 #endif
 
 #ifndef PLATFORM_LOCAL_RESOURCES_ONLY
-#  if defined(NO_NETWORK) || PLATFORM_PS2 || PLATFORM_WII
+#  if defined(NO_NETWORK) || PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS
 #    define PLATFORM_LOCAL_RESOURCES_ONLY 1
 #  else
 #    define PLATFORM_LOCAL_RESOURCES_ONLY 0
@@ -160,7 +173,7 @@
 #endif
 
 #ifndef PLATFORM_HAS_VIRTUAL_KEYBOARD
-#  define PLATFORM_HAS_VIRTUAL_KEYBOARD (PLATFORM_PS2 || PLATFORM_WII)
+#  define PLATFORM_HAS_VIRTUAL_KEYBOARD (PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS)
 #endif
 
 #ifndef PLATFORM_SIMPLE_TRANSPARENT_TERRAIN
@@ -183,7 +196,7 @@
 #endif
 
 #ifndef PLATFORM_PC
-#  if PLATFORM_PS2 || PLATFORM_WII
+#  if PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS
 #    define PLATFORM_PC 0
 #  else
 #    define PLATFORM_PC 1
@@ -257,7 +270,7 @@
 // certainly cannot afford unbounded memory, and the implication keeps every
 // existing PS2 configuration -- including -DWII_CONSOLE_LOW=ON -- valid.
 #ifndef PLATFORM_BOUNDED_WORLD
-#  if PLATFORM_PS2 || PLATFORM_WII || PLATFORM_CONSOLE_LOW
+#  if PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS || PLATFORM_CONSOLE_LOW
 #    define PLATFORM_BOUNDED_WORLD 1
 #  else
 #    define PLATFORM_BOUNDED_WORLD 0
@@ -311,7 +324,7 @@ declares."
 // This is deliberately NOT tied to PLATFORM_CONSOLE_LOW: it is a backend
 // capability question, not a performance budget.
 #ifndef PLATFORM_FONT_IMMEDIATE
-#  if PLATFORM_PS2 || PLATFORM_WII
+#  if PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS
 #    define PLATFORM_FONT_IMMEDIATE 1
 #  else
 #    define PLATFORM_FONT_IMMEDIATE 0
@@ -322,8 +335,17 @@ declares."
 // their current transform. Wii and PS2 are both excluded: Wii compiles each box
 // once into a native GX display list, PS2 into a captured RAM mesh, and both
 // replay it against the live animated modelview.
+//
+// The 3DS has no display list at all (nothing in ModelRenderer records one for
+// it either), so it submits through the immediate path like the desktop's
+// fallback branch, but without the GL call list behind it: renderImmediate is
+// the only shape the citro3d backend will implement.
 #ifndef PLATFORM_MODEL_IMMEDIATE
-#  define PLATFORM_MODEL_IMMEDIATE 0
+#  if PLATFORM_3DS
+#    define PLATFORM_MODEL_IMMEDIATE 1
+#  else
+#    define PLATFORM_MODEL_IMMEDIATE 0
+#  endif
 #endif
 
 // Persistent native meshes are a backend capability. Wii records immutable GX
@@ -351,8 +373,10 @@ declares."
 // the existing mouse-hover/click GUI code is unusable: the player has no idea
 // where they are aiming. Both console backends feed lwjgl::Mouse from a stick
 // (PS2) or the Wiimote IR pointer (Wii), so the coordinates are already there.
+// The 3DS feeds it from the touch screen, which is an absolute pointer on the
+// bottom LCD -- same consumer, third producer.
 #ifndef PLATFORM_SOFTWARE_CURSOR
-#  if PLATFORM_PS2 || PLATFORM_WII
+#  if PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS
 #    define PLATFORM_SOFTWARE_CURSOR 1
 #  else
 #    define PLATFORM_SOFTWARE_CURSOR 0

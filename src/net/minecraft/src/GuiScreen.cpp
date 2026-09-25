@@ -12,10 +12,10 @@
 #include "pc/lwjgl/Mouse.h"
 #include "platform/PlatformTuning.h"
 #include "platform/Input.h"
-#if !PLATFORM_PS2 && !PLATFORM_WII
+#if !PLATFORM_PS2 && !PLATFORM_WII && !PLATFORM_3DS
 #include "SDL_clipboard.h"
 #endif
-#if PLATFORM_PS2 || PLATFORM_WII
+#if PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS
 #include "VirtualKeyboard.h"
 #include "ContainerSlotNavigator.h"
 #endif
@@ -192,7 +192,7 @@ void GuiScreen::keyTyped(char_t c, int_t key)
 jstring GuiScreen::getClipboardString()
 {
 	// SDL clipboard
-#if !PLATFORM_PS2 && !PLATFORM_WII
+#if !PLATFORM_PS2 && !PLATFORM_WII && !PLATFORM_3DS
 	char *text = SDL_GetClipboardText();
 	if (text)
 	{
@@ -206,7 +206,7 @@ jstring GuiScreen::getClipboardString()
 
 void GuiScreen::setClipboardString(const std::string &text)
 {
-#if !PLATFORM_PS2 && !PLATFORM_WII
+#if !PLATFORM_PS2 && !PLATFORM_WII && !PLATFORM_3DS
 	SDL_SetClipboardText(text.c_str());
 #else
 	(void)text;
@@ -301,11 +301,11 @@ void GuiScreen::initGui()
 void GuiScreen::handleInput()
 {
 	handleSpecializedMenuInput();
-#if PLATFORM_PS2 || PLATFORM_WII
+#if PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS
 	// Console GUI helpers consume the platform snapshot here, after the native
 	// backend has published this frame's controller state and before queued
 	// mouse/keyboard events are dispatched to the screen. Keeping this routing
-	// in shared GUI code prevents Wii/PS2 input backends from depending on
+	// in shared GUI code prevents Wii/PS2/3DS input backends from depending on
 	// Minecraft screen classes.
 	VirtualKeyboard::instance().tick();
 	if (!platformTextInputExclusive())

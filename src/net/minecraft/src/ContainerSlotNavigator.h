@@ -1,6 +1,6 @@
 #pragma once
 
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 
 #include "java/Type.h"
 
@@ -57,4 +57,4 @@ private:
     int nextRepeatMs = 0;
 };
 
-#endif // PS2_PLATFORM || WII_PLATFORM
+#endif // PS2_PLATFORM || WII_PLATFORM || CTR_PLATFORM

@@ -1,0 +1,70 @@
+// CrashHandler_3ds.cpp -- 3DS implementation of CrashHandler::Crash().
+//
+// Mirrors src/wii/CrashHandler_wii.cpp: on a console a crash must become text
+// the player can read (and photograph), not a frozen frame. The 3DS has an
+// easier job than the Wii here -- printf already reaches the bottom-screen
+// console set up by main_3ds.cpp, with no framebuffer/console bring-up of our
+// own -- so all this file adds is the hold (nothing may tear the console down
+// while the message is being read) and the deterministic exit.
+//
+// Providing this here means src/client/Minecraft.cpp needs no 3DS branch: its
+// existing call path goes straight into this.
+#ifdef CTR_PLATFORM
+
+#include "pc/CrashHandler.h"
+
+#include <3ds.h>
+
+#include <cstdio>
+#include <cstdlib>
+
+namespace
+{
+
+// Same role as WiiInput::waitForHome() in the Wii version: the message is the
+// entire point of a crash screen, so hold it until the player dismisses it.
+// START mirrors the bring-up smoke test's exit key (DsBringup.cpp); HOME and
+// sleep are handled by aptMainLoop() either way.
+void waitForDismissal()
+{
+	while (aptMainLoop())
+	{
+		hidScanInput();
+		if (hidKeysDown() & KEY_START)
+			break;
+		gspWaitForVBlank();
+	}
+}
+
+} // namespace
+
+namespace CrashHandler
+{
+
+void Crash(const std::string &message, const std::string &stackTrace)
+{
+	// Print first, always: stdout is unbuffered after consoleInit(), so this
+	// lands on the bottom screen even if everything below misbehaves.
+	std::printf("\nOptiCraft has crashed\n");
+	std::printf("---------------------\n\n");
+	std::printf("%s\n", message.c_str());
+	if (!stackTrace.empty())
+		std::printf("\n%s\n", stackTrace.c_str());
+	std::printf("\nPress START to exit.\n");
+	// Belt and braces: a crash may have upset the stdio state the console set
+	// up, and an unflushed tail is a crash report that stops early.
+	std::fflush(stdout);
+
+	waitForDismissal();
+
+	// Same teardown order and exit code as CrashHandler_wii.cpp (std::exit(1)
+	// after the services are down); the service order matches
+	// main_3ds.cpp's shutdownServices().
+	gfxExit();
+	fsExit();
+	std::exit(1);
+}
+
+} // namespace CrashHandler
+
+#endif // CTR_PLATFORM

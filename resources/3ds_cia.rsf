@@ -1,0 +1,221 @@
+# makerom RSF -- OptiCraft Heritage, installable .cia.
+#
+# Consumed verbatim by both packaging paths, so there is exactly ONE copy of
+# this manifest in the repository:
+#
+#     build 3ds.bat                       (Windows; packages after every build)
+#     .github/workflows/build.yml         (the build-3ds job's Package step)
+#
+#     makerom -f cia -o bin/3ds/OptiCraft.cia -target t -ignoresign
+#             -rsf resources/3ds_cia.rsf
+#             -elf  bin/3ds/OptiCraft.elf
+#             -icon bin/3ds/OptiCraft.smdh
+#
+# This file is REQUIRED, not optional: makerom writes the exheader from it and
+# has no way to build a .cia without one, so the packaging steps cannot fall
+# back to something else -- the only alternative would be moving this same text
+# into another file, not removing it.
+#
+# The ELF, not the .3dsx, is the input: makerom lays out the code section
+# itself and writes the exheader from this file, so nothing has to convert the
+# homebrew binary into a CXI first, and cxitool (devkitPro/3dstools' unmerged
+# 'cxi-stuff' branch) is not used at all.
+#
+# Identity split -- what the player actually reads comes from the .smdh that
+# cmake/3ds.cmake builds, and is deliberately NOT repeated here:
+#
+#     smdhtool --create "OptiCraft Heritage"
+#                      "Minecraft Beta 1.7.3 clean-room C++ port"
+#                      "OptiJuegos" <icon> bin/3ds/OptiCraft.smdh
+#
+# so re-supplying a title would only risk the two disagreeing. What is unique
+# to this file is the exheader: TitleID, product code, and access control.
+#
+# One identity field is *not* ours to pick: makerom has no ProcessName key (it
+# rejects it as "Unrecognised key") and derives the exheader's 8-byte process
+# name from BasicInfo/Title, truncated -- so it lands on "OptiCraf", not the
+# "OPTICRFT" cxitool used to write. Only the process name differs; the
+# HOME-menu title, product code and TitleID are unaffected.
+#
+# RSF shape matters: makerom takes literals, not numbers or booleans -- it
+# rejects `ProgramLaunchMode` outright and errors with things like "Invalid
+# 'EnableL2Cache'" for `1` where `true` is meant. Every access-control list
+# below is a byte-for-byte parity copy of the exheader this port shipped while
+# it still went through cxitool (27 services, 21 dependencies), so swapping the
+# tool cannot quietly cost the title a service it was granted.
+
+BasicInfo:
+  Title                   : OptiCraft Heritage
+  ProductCode             : CTR-P-OPTH
+
+TitleInfo:
+  Category                : Application
+  UniqueId                : 0x1234
+
+Option:
+  UseOnSD                 : true
+  FreeProductCode         : false
+  MediaFootPadding        : false
+  EnableCrypt             : false
+  EnableCompress          : true
+
+AccessControlInfo:
+  CoreVersion             : 2
+  DescVersion             : 2
+  ReleaseKernelMajor      : "02"
+  ReleaseKernelMinor      : "33"
+
+  # FS:USER archive permissions. DirectSdmc is the reason sdmc:/opticraft
+  # resolves at all -- without it the port cannot see its own assets on the SD.
+  FileSystemAccess:
+   - DirectSdmc
+
+  # Old-3DS floor: 64 MB application mode at 268 MHz. The three New-3DS keys
+  # below are opt-in maxima, not requirements -- the kernel falls back to the
+  # Legacy/268MHz settings on an Old 3DS, so one binary serves both machines
+  # (64 MB / 268 MHz on Old, 124 MB / 804 MHz + L2 on New).
+  MemoryType              : Application
+  SystemMode              : 64MB
+  IdealProcessor          : 0
+  AffinityMask            : 1
+  Priority                : 16
+  MaxCpu                  : 0
+  HandleTableSize         : 0x200
+  DisableDebug            : false
+  EnableForceDebug        : false
+  CanWriteSharedPage      : true
+  CanUsePrivilegedPriority: false
+  CanUseNonAlphabetAndNumber: true
+  PermitMainFunctionArgument: true
+  CanShareDeviceMemory    : true
+  RunnableOnSleep         : false
+  SpecialMemoryArrange    : true
+
+  SystemModeExt           : 124MB
+  CpuSpeed                : 804MHz
+  EnableL2Cache           : true
+  CanAccessCore2          : true
+
+  # SVCs the runtime is allowed to issue. The set is the standard application
+  # one; libctru needs the thread/memory/handle group (CreateThread, QueryMemory,
+  # ControlMemory, SendSyncRequest*) plus the sync group aptMainLoop() blocks on.
+  SystemCallAccess:
+    ArbitrateAddress: 34
+    Break: 60
+    CancelTimer: 28
+    ClearEvent: 25
+    ClearTimer: 29
+    CloseHandle: 35
+    ConnectToPort: 45
+    ControlMemory: 1
+    CreateAddressArbiter: 33
+    CreateEvent: 23
+    CreateMemoryBlock: 30
+    CreateMutex: 19
+    CreateSemaphore: 21
+    CreateThread: 8
+    CreateTimer: 26
+    DuplicateHandle: 39
+    ExitProcess: 3
+    ExitThread: 9
+    GetCurrentProcessorNumber: 17
+    GetHandleInfo: 41
+    GetProcessId: 53
+    GetProcessIdOfThread: 54
+    GetProcessIdealProcessor: 6
+    GetProcessInfo: 43
+    GetResourceLimit: 56
+    GetResourceLimitCurrentValues: 58
+    GetResourceLimitLimitValues: 57
+    GetSystemInfo: 42
+    GetSystemTick: 40
+    GetThreadContext: 59
+    GetThreadId: 55
+    GetThreadIdealProcessor: 15
+    GetThreadInfo: 44
+    GetThreadPriority: 11
+    MapMemoryBlock: 31
+    OutputDebugString: 61
+    QueryMemory: 2
+    ReleaseMutex: 20
+    ReleaseSemaphore: 22
+    SendSyncRequest1: 46
+    SendSyncRequest2: 47
+    SendSyncRequest3: 48
+    SendSyncRequest4: 49
+    SendSyncRequest: 50
+    SetThreadPriority: 12
+    SetTimer: 27
+    SignalEvent: 24
+    SleepThread: 10
+    UnmapMemoryBlock: 32
+    WaitSynchronization1: 36
+    WaitSynchronizationN: 37
+    Backdoor: 123
+
+  # Service ports this title may connect to (max 34). Parity list: exactly the
+  # 27 the cxitool-built exheader carried. Granting a port only sets a
+  # permission, it does not load anything, so a spare entry costs nothing while
+  # a missing one would be a runtime "port not found".
+  ServiceAccessControl:
+   - APT:U
+   - ac:u
+   - am:net
+   - boss:U
+   - cam:u
+   - cecd:u
+   - cfg:nor
+   - cfg:u
+   - csnd:SND
+   - dsp::DSP
+   - frd:u
+   - fs:USER
+   - gsp::Gpu
+   - hid:USER
+   - http:C
+   - ir:USER
+   - ir:rst
+   - ir:u
+   - mic:u
+   - ndm:u
+   - news:u
+   - nwm::UDS
+   - ptm:u
+   - pxi:dev
+   - soc:U
+   - ssl:C
+   - y2r:u
+
+SystemControlInfo:
+  SaveDataSize            : 0K
+  RemasterVersion         : 0
+  # makerom defaults StackSize to 0x4000 (16 KiB) and warns; the game's own
+  # frames run deeper than that, and the previous exheader shipped 0x40000.
+  StackSize               : 0x40000
+
+  # Sysmodules the kernel must have up before the process starts (max 48).
+  # Parity list: the 21 the previous exheader carried. A module that does not
+  # exist on the target firmware makes the title hang on the 3DS logo, so this
+  # stays a copy of what was proven to boot rather than an expanded guess.
+  Dependency:
+    am: 0x0004013000001502
+    camera: 0x0004013000001602
+    cfg: 0x0004013000001702
+    dsp: 0x0004013000001A02
+    gsp: 0x0004013000001C02
+    hid: 0x0004013000001D02
+    mic: 0x0004013000002002
+    ptm: 0x0004013000002202
+    ac: 0x0004013000002402
+    cecd: 0x0004013000002602
+    csnd: 0x0004013000002702
+    http: 0x0004013000002902
+    ndm: 0x0004013000002B02
+    nwm: 0x0004013000002D02
+    socket: 0x0004013000002E02
+    ssl: 0x0004013000002F02
+    friends: 0x0004013000003202
+    ir: 0x0004013000003302
+    boss: 0x0004013000003402
+    news: 0x0004013000003502
+    camera2: 0x0004013020001602

@@ -79,7 +79,7 @@ WorldRenderer::WorldRenderer(World *world, std::vector<TileEntity *> *tileEntiti
 	worldObj      = world;
 	tileEntities  = tileEntitiesIn;
 	sizeWidth = sizeHeight = sizeDepth = size;
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 	glRenderList = glListId;
 #else
 	(void)glListId;
@@ -131,7 +131,7 @@ WorldRenderer::WorldRenderer(World *world, std::vector<TileEntity *> *tileEntiti
 		pcLegacyPublishedVisibility[face] = 0x3f;
 	pcLegacyCpuVisible = true;
 #endif
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 	isVisibleFromPosition = false;
 	visibleFromX = 0.0;
 	visibleFromY = 0.0;
@@ -253,7 +253,7 @@ void WorldRenderer::cleanup()
 	renderTerrainChunkHandlesDestroy(terrainChunkHandles);
 #endif
 
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 	glRenderList = 0;
 	glOcclusionQuery = 0;
 #endif
@@ -299,7 +299,7 @@ void WorldRenderer::setPosition(int_t x, int_t y, int_t z)
 	// actually rebuilds. Repositioning a renderer grid can touch hundreds of
 	// sections at once; compiling a list for every moved section here creates a
 	// large synchronous spike before any useful terrain work begins.
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 	needsOcclusionBoxUpdate = true;
 	isVisibleFromPosition = false;
 #endif
@@ -307,7 +307,7 @@ void WorldRenderer::setPosition(int_t x, int_t y, int_t z)
 	markDirty();
 }
 
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 void WorldRenderer::updateOcclusionBox()
 {
 	if (!needsOcclusionBoxUpdate)
@@ -330,9 +330,11 @@ void WorldRenderer::updateInFrustrum(ICamera *icamera)
 	const int cls = icamera->classifyBoundingBox(rendererBoundingBox);
 	isInFrustum = (cls != 0);
 	isFullyInFrustum = (cls == 2);
-#elif PLATFORM_WII
+#elif PLATFORM_WII || PLATFORM_3DS
 	// GX has no occlusion queries, so the stronger fully-inside classification
 	// is dead work here. A plain frustum test is the complete Wii contract.
+	// The 3DS joins it: Fancy Occlusion's query pair is desktop GL, and
+	// isFullyInFrustum is only declared for the two backends that read it.
 	isInFrustum = icamera->isBoundingBoxInFrustum(rendererBoundingBox);
 #else
 	if (Config::isOcclusionFancy())
@@ -430,6 +432,14 @@ void WorldRenderer::updateRenderer()
 					{
 						listOpen = true;
 						renderBeginDisplayList(glRenderList + pass);
+						// The section list is self-contained on GL: it binds
+						// the terrain atlas at record time, so the replay
+						// samples it whatever the caller had bound. On the
+						// 3DS the bind happens live at capture (the lightmap
+						// update may have re-bound the only sampler in the
+						// meantime -- see RenderAPI_CTR_3DS's unit notes), so
+						// the recorded state carries the terrain too.
+						renderBindTexture(ConnectedTextures::getTerrainTextureId());
 						renderPushMatrix();
 						// Translate to the clip-space origin of this chunk
 						renderTranslate((float)posXClip, (float)posYClip, (float)posZClip);
@@ -698,7 +708,7 @@ void WorldRenderer::setDontDraw()
 #if PLATFORM_PC || PLATFORM_PS2
 	isFullyInFrustum = false;
 #endif
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 	isVisibleFromPosition = false;
 #endif
 	isInitialized = false;
@@ -719,7 +729,7 @@ void WorldRenderer::detachFromWorld()
 	worldObj = nullptr;
 }
 
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 void WorldRenderer::callOcclusionQueryList()
 {
 	renderCallDisplayList(glRenderList + 2);

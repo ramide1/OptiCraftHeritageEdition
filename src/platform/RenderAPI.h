@@ -345,8 +345,12 @@ void renderScaleDouble(double x, double y, double z);
 void renderFrustum(double left, double right, double bottom, double top, double nearValue, double farValue);
 void renderOrtho(double left, double right, double bottom, double top, double nearValue, double farValue);
 
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 // Desktop-only retained-mode compatibility used by the original 1.2.5 GL renderer.
+// The 3DS is not desktop GL: it compiles this path because that is what
+// WorldRenderer::updateRenderer() and RenderGlobal still speak before the
+// citro3d renderer replaces it, and RenderAPI_CTR_3DS.cpp defines these as the
+// thinnest possible stubs (distinct ids, no recording).
 int renderGenerateDisplayLists(int count);
 void renderDeleteDisplayLists(int first, int count);
 void renderBeginDisplayList(int list);

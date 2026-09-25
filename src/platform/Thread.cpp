@@ -7,6 +7,10 @@
 #include <malloc.h>
 #include <algorithm>
 #include <new>
+#elif defined(CTR_PLATFORM)
+#include <3ds.h>
+#include <algorithm>
+#include <new>
 #else
 #include <thread>
 #include <functional>
@@ -193,6 +197,122 @@ bool PlatformThread::isCurrent() const
 std::uintptr_t PlatformThread::currentId()
 {
     return static_cast<std::uintptr_t>(GetThreadId());
+}
+
+#elif defined(CTR_PLATFORM)
+
+namespace
+{
+// threadCreate() wants a void(void*) entry, but PlatformThread::Entry returns
+// void*. Carry the pair through a heap context instead of adding a static
+// member to Thread.h (the header would then need CTR_PLATFORM too), which is
+// the same shape the PS2 branch uses.
+struct CtrThreadStartContext
+{
+    PlatformThread::Entry entry = nullptr;
+    void* argument = nullptr;
+};
+
+void ctrThreadEntry(void* raw)
+{
+    CtrThreadStartContext* context = static_cast<CtrThreadStartContext*>(raw);
+    if (context != nullptr && context->entry != nullptr)
+    {
+        try
+        {
+            context->entry(context->argument);
+        }
+        catch (...)
+        {
+            // Never unwind a C++ exception through a libctru thread entry.
+        }
+    }
+}
+} // namespace
+
+struct PlatformThread::Impl
+{
+    Thread thread = nullptr;
+    CtrThreadStartContext* context = nullptr;
+};
+
+PlatformThread::PlatformThread() : impl_(new (std::nothrow) Impl()) {}
+
+PlatformThread::~PlatformThread()
+{
+    if (!impl_)
+        return;
+    if (joinable() && !isCurrent())
+        join();
+    delete impl_;
+}
+
+bool PlatformThread::start(Entry entry, void* argument, std::size_t stackSize,
+                           int priority, std::uintptr_t affinityMask)
+{
+    if (!impl_ || !entry || joinable())
+        return false;
+    (void)affinityMask; // Phase 1 pins to the default core; see core_id below.
+
+    CtrThreadStartContext* context = new (std::nothrow) CtrThreadStartContext();
+    if (!context)
+        return false;
+    context->entry = entry;
+    context->argument = argument;
+
+    // libctru counts the other way round -- low value is high priority -- and
+    // only accepts [0x18;0x3F], with the main thread at 0x30. The shared
+    // signature's 64 means "normal" (the std::thread branch maps below/above
+    // 64 onto BELOW/ABOVE_NORMAL), so anchor it on the main thread's own
+    // priority and let larger shared values become smaller 3DS ones, clamped
+    // into the userland range. A raw 64 would land at 0x40, one past the top.
+    int prio = 0x30 + (64 - priority);
+    if (prio < 0x18)
+        prio = 0x18;
+    else if (prio > 0x3F)
+        prio = 0x3F;
+
+    // -2 = the CPU the Exheader selects (core 0 on Old 3DS, and legal there;
+    // running on core 1 would need APT_SetAppCpuTimeLimit first, and on New 3DS
+    // cores 2/3 need kernel flags -- deferred to a later phase).
+    Thread thread = threadCreate(ctrThreadEntry, context, stackSize, prio, -2, false);
+    if (thread == nullptr)
+    {
+        delete context;
+        return false;
+    }
+
+    impl_->thread = thread;
+    impl_->context = context;
+    return true;
+}
+
+void PlatformThread::join()
+{
+    if (!joinable() || isCurrent())
+        return;
+
+    threadJoin(impl_->thread, U64_MAX);
+    // Not detached, so the handle has to be released explicitly; threadFree on
+    // a detached thread would double-free it.
+    threadFree(impl_->thread);
+    delete impl_->context;
+
+    impl_->thread = nullptr;
+    impl_->context = nullptr;
+}
+
+bool PlatformThread::joinable() const { return impl_ && impl_->thread != nullptr; }
+
+bool PlatformThread::isCurrent() const { return joinable() && impl_->thread == threadGetCurrent(); }
+
+std::uintptr_t PlatformThread::currentId()
+{
+    // NULL for the main thread, which therefore reads as 0. That is still a
+    // usable identity: every live PlatformThread has a non-null handle, so the
+    // main thread is distinguishable from all of them, and each worker from
+    // every other. WorldLoadTrace only ever captures the game thread here.
+    return reinterpret_cast<std::uintptr_t>(threadGetCurrent());
 }
 
 #else

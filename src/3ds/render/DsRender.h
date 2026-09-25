@@ -1,0 +1,90 @@
+#pragma once
+
+// DsRender.h -- citro3d primitives behind the 3DS RenderAPI surface.
+//
+// RenderAPI_CTR_3DS.cpp owns the GL-shaped state the shared game code drives
+// (capabilities, blend factors, matrix mode, bound texture name) and pushes it
+// here at draw time; this layer owns everything that is genuinely PICA200:
+// the render target, the frame lifecycle, the vertex staging arenas, the
+// shader program and the GPU state translation.
+//
+// The split mirrors the Wii backend (RenderAPI_GX_WII.cpp over WiiNative*),
+// and exists for the same reason: the platform surface stays pure C++ with no
+// console headers in it, so the shared code can be reasoned about without
+// knowing anything about the hardware below.
+
+#include "platform/RenderAPI.h"
+
+namespace ds
+{
+
+// GL-shaped fixed-function state, mutated by RenderAPI_CTR_3DS.cpp and pushed
+// to the PICA immediately before every draw. Defaults are GL's defaults.
+struct GpuState
+{
+	bool blend = false;
+	RenderBlendFactor blendSrc = RenderBlendFactor::One;
+	RenderBlendFactor blendDst = RenderBlendFactor::Zero;
+
+	bool depthTest = false;
+	bool depthWrite = true;
+	RenderCompare depthFunc = RenderCompare::Less;
+
+	bool alphaTest = false;
+	RenderCompare alphaFunc = RenderCompare::Always;
+	float alphaRef = 0.0f;
+
+	bool cullFace = false;
+	RenderFace cullFaceMode = RenderFace::Back;
+
+	bool texture2d = false;
+	int boundTexture = 0;
+
+	bool colorWriteR = true;
+	bool colorWriteG = true;
+	bool colorWriteB = true;
+	bool colorWriteA = true;
+};
+
+// Lifecycle. init() brings up C3D, the shader and the render target; it is
+// idempotent and returns false on failure, in which case every other call
+// here degrades to a no-op and the frame loop simply presents VBlanks (the
+// phase-1 heartbeat behaviour, but with the reason logged).
+bool init();
+void fini();
+
+// Close the open citro3d frame if there is one (renderSubmitFrame: start the
+// asynchronous present as early as the last draw, without waiting for it).
+void submitFrame();
+
+// Close the open frame if there is one, then report whether a citro3d frame
+// has ended since the last call that returned true. swapBuffers uses the
+// return value to decide its own pacing: a submitted frame is paced by the
+// next frame's C3D_FrameBegin(C3D_FRAME_SYNCDRAW), so only an iteration that
+// submitted nothing should wait for VBlank itself -- the long startGame()
+// stretches with no LoadingScreenRenderer frame, for instance.
+bool present();
+
+// Clear values, in GL terms.
+void setClearColor(float r, float g, float b, float a);
+void setClearDepth(double depth);
+
+// Clear the current frame's target. Opens a frame first when there is not
+// one: in this port a colour clear is where a frame starts (see the frame
+// lifecycle note in DsRender.cpp).
+void clear(unsigned mask);
+
+// The logical (panel-space, 400x240) viewport. Recorded for
+// renderGetViewport()/ActiveRenderInfo; the GPU viewport is the whole rotated
+// target and is installed by C3D_FrameDrawOn, because every viewport the game
+// asks for is either the full screen or -- GuiEnchantment's book, the one
+// sub-viewport in the game -- not on this milestone's path.
+void setViewport(int x, int y, int width, int height);
+void getViewport(int* values);
+
+// Stage the mesh and draw it. Returns false only when the layout cannot be
+// represented (short positions, or a stride the fixed 32-byte attribute order
+// does not cover) -- the same contract renderDrawInterleaved documents.
+bool draw(const RenderInterleavedMesh& mesh, const GpuState& state);
+
+} // namespace ds

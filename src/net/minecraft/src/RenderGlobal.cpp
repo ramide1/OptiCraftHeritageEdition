@@ -65,7 +65,7 @@
 #include "Frustrum.h"
 #include "GameSettings.h"
 #include "legacy/LegacyLook.h"
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 #include "GLAllocation.h"
 #endif
 #include "GuiIngame.h"
@@ -152,9 +152,16 @@ RenderGlobal::RenderGlobal(Minecraft *minecraft, RenderEngine *renderengine)
 
 #if PLATFORM_PC
 	occlusionEnabled = !PLATFORM_PC_LEGACY && renderSupportsFeature(RenderFeature::OcclusionQuery);
-	// Desktop 1.2.5 retains three GL lists per WorldRenderer (two terrain passes
-	// plus the occlusion box). Legacy PC uses a fixed low-end grid, so reserve only
-	// the namespace that grid can address instead of the desktop maximum.
+#endif
+	// Three retained lists per WorldRenderer (two terrain passes plus the
+	// occlusion box). Desktop GL compiles them; the 3DS backend records the
+	// same per-section lists into its CPU capture (RenderAPI_CTR_3DS.cpp's
+	// DisplayListEntry), so both need the id namespace reserved up front --
+	// sharing one id per section (the previous console state, which handed
+	// every renderer 0) means every rebuild overwrites the same storage and
+	// the replay draws one stale section at every origin.
+	// Legacy PC uses a fixed low-end grid, so reserve only the namespace that
+	// grid can address instead of the desktop maximum.
 #if PLATFORM_PC_LEGACY
 	constexpr int_t maxWorldRenderers = PLATFORM_VISIBLE_CHUNK_DIAMETER * PLATFORM_VERTICAL_CHUNK_COUNT * PLATFORM_VISIBLE_CHUNK_DIAMETER;
 #else
@@ -162,7 +169,10 @@ RenderGlobal::RenderGlobal(Minecraft *minecraft, RenderEngine *renderengine)
 	constexpr int_t maxChunksTall = WorldHeight::SECTION_COUNT;
 	constexpr int_t maxWorldRenderers = maxChunksWide * maxChunksTall * maxChunksWide;
 #endif
+#if PLATFORM_PC || PLATFORM_3DS
 	glRenderListBase = GLAllocation::generateDisplayLists(maxWorldRenderers * 3);
+#endif
+#if PLATFORM_PC
 	if (occlusionEnabled)
 	{
 		glOcclusionQueryBase = std::vector<int_t>(maxWorldRenderers);
@@ -173,7 +183,7 @@ RenderGlobal::RenderGlobal(Minecraft *minecraft, RenderEngine *renderengine)
 #if PLATFORM_PS2
 	MC_LOG_INFO("ps2", "RenderGlobal: allocating sky meshes\n");
 #endif
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 	renderStaticMeshCreate(starMesh);
 	renderStaticMeshCreate(skyMesh);
 	renderStaticMeshCreate(skyMesh2);
@@ -286,7 +296,7 @@ RenderGlobal::RenderGlobal(Minecraft *minecraft, RenderEngine *renderengine)
 RenderGlobal::~RenderGlobal()
 {
 	changeWorld(nullptr);
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 	renderStaticMeshDestroy(starMesh);
 	renderStaticMeshDestroy(skyMesh);
 	renderStaticMeshDestroy(skyMesh2);
@@ -386,7 +396,7 @@ void RenderGlobal::renderStars()
 		}
 	}
 
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 	tessellator->finishStaticMesh(starMesh);
 #else
 	tessellator->draw();
@@ -485,7 +495,7 @@ void RenderGlobal::loadRenderers()
 	worldRenderers = new WorldRenderer *[totalRenderers]();
 	sortedWorldRenderers = new WorldRenderer *[totalRenderers]();
 
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 	int_t k = 0;
 #endif
 	int_t l = 0;
@@ -504,7 +514,7 @@ void RenderGlobal::loadRenderers()
 			for (int_t l1 = 0; l1 < renderChunksDeep; l1++)
 			{
 				int_t index = (l1 * renderChunksTall + k1) * renderChunksWide + j1;
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 				const int_t rendererListId = glRenderListBase + k;
 #else
 				const int_t rendererListId = 0;
@@ -522,7 +532,7 @@ void RenderGlobal::loadRenderers()
 				worldRenderers[index]->markDirty();
 				sortedWorldRenderers[index] = worldRenderers[index];
 				enqueueRendererUpdate(worldRenderers[index]);
-#if PLATFORM_PC
+#if PLATFORM_PC || PLATFORM_3DS
 				k += 3;
 #endif
 			}
@@ -1687,7 +1697,7 @@ void RenderGlobal::renderSky(float f)
 	renderColor3f(f1, f2, f3);
 	if (Config::isSkyEnabled()) // OptiFine: Sky OFF (sol/luna/estrellas siguen visibles)
 	{
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 		renderStaticMeshDraw(skyMesh);
 #else
 		renderCallDisplayList(glSkyList);
@@ -1808,7 +1818,7 @@ void RenderGlobal::renderSky(float f)
 		float starBlue = f17;
 		applyPs2LegacyAtmosphereRgb(mc, starRed, starGreen, starBlue);
 		renderColor4f(starRed, starGreen, starBlue, f17);
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 		renderStaticMeshDraw(starMesh);
 #else
 		renderCallDisplayList(starGLCallList);
@@ -1830,7 +1840,7 @@ void RenderGlobal::renderSky(float f)
 	{
 		renderPushMatrix();
 		renderTranslate(0.0f, 12.0f, 0.0f);
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 		renderStaticMeshDraw(skyMesh2);
 #else
 		renderCallDisplayList(glSkyList2);
@@ -1874,7 +1884,7 @@ void RenderGlobal::renderSky(float f)
 	{
 		renderPushMatrix();
 		renderTranslate(0.0f, -((float)(horizonOffset - 16.0)), 0.0f);
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM)
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 		renderStaticMeshDraw(skyMesh2);
 #else
 		renderCallDisplayList(glSkyList2);
