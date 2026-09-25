@@ -14,6 +14,7 @@
 #include "client/Minecraft.h"
 #include "java/String.h"
 #include "3ds/DsBootstrap.h"
+#include "3ds/system/DsEarlyCrash.h"
 
 namespace
 {
@@ -86,6 +87,13 @@ int main(int argc, char **argv)
 	gfxSetDoubleBuffering(GFX_TOP, true);
 	gfxSetDoubleBuffering(GFX_BOTTOM, false);
 	consoleInit(GFX_BOTTOM, nullptr);
+
+	// Terminate handler before anything else can throw: an uncaught C++
+	// exception otherwise dies through libstdc++'s default terminate, whose
+	// one-line stderr note is the whole crash report and dies with the run.
+	// The handler routes through CrashHandler::Crash() -- bottom screen held
+	// until START, reason copied into the file log.
+	DsEarlyCrash::install();
 
 	// fsInit + the "sdmc:" mount + mkdir sdmc:/opticraft, all in DsBootstrap
 	// because java::File objects and Resource lookups can trigger the same

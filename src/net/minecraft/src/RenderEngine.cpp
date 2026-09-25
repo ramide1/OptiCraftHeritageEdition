@@ -211,6 +211,11 @@ RenderEngine::RenderEngine(TexturePackList *texturepacklist, GameSettings *games
 	, texturePack(texturepacklist)
 	, missingTextureImage(createMissingTexture())
 {
+	// ConnectedTextures::getTerrainTextureId() resolves through a static
+	// engine pointer that update() only sets on a texture refresh, which
+	// never happens during boot. Attach it now so the first world load binds
+	// the real atlas instead of name 0.
+	ConnectedTextures::attachRenderEngine(this);
 	loadCustomAnimations();
 }
 

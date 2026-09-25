@@ -130,12 +130,21 @@ constexpr int kAttribCount = 5;
 // (Same nibble convention AttrInfo_AddLoader and BufInfo_Add both use.)
 constexpr u64 kAttribPermutation = 0x43210;
 
-// Staging arenas: see the vertex staging section above. 4 x 16384 vertices is
-// half a megabyte each -- generous for a menu/HUD frame, with wrap-around
-// headroom for denser world frames; the overflow path drops the draw and
-// logs once rather than corrupting one that is still in flight.
-constexpr int kArenaCount = 4;
-constexpr int kArenaVertices = 16384;
+// Staging arenas: see the vertex staging section above. 4 x 32768 vertices is
+// one megabyte each -- generous for a menu/HUD frame. One 32768-slot arena is
+// also the single-draw ceiling: a dense 16x16x16 section captures to ~21k
+// vertices (measured: "draw with 21096 vertices exceeds one arena" in the
+// 2026-09-25 log, a dropped chunk), so 16384-slot arenas were silently losing
+// the densest sections of all. A dense world frame still needs more than one
+// pass through the ring, so rather than dropping draws the ring grows one
+// arena at a time up to kArenaMaxCount; arenas persist once grown because the
+// frames that needed them keep needing them. The cap keeps the linear heap
+// budget at 8 MB, as it was with the old 16 x 16384 ring, and only past the
+// cap does the overflow path drop the draw and log once rather than corrupt
+// one that is still in flight.
+constexpr int kArenaInitialCount = 4;
+constexpr int kArenaMaxCount = 8;
+constexpr int kArenaVertices = 32768;
 
 // The command buffer citro3d records into, in bytes. C3D_DEFAULT_CMDBUF_SIZE
 // is 0x40000 (256 KB / 65,536 words); a world frame spends ~66K words of
@@ -175,10 +184,12 @@ bool s_inFrame = false;
 u32 s_framesSubmitted = 0;
 u32 s_framesPresented = 0;
 
-void* s_arenas[kArenaCount] = {};
+void* s_arenas[kArenaMaxCount] = {};
+int s_arenaCount = kArenaInitialCount;
 int s_arenaIndex = 0;
 int s_arenaCursor = 0;
 bool s_arenaOverflowLogged = false;
+bool s_arenaGrowthLogged = false;
 
 float s_clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 double s_clearDepth = 1.0;
@@ -341,16 +352,43 @@ u8* reserveArena(int vertices)
 	}
 	if (s_arenaCursor + vertices > kArenaVertices)
 	{
-		if (s_arenaIndex + 1 >= kArenaCount)
+		if (s_arenaIndex + 1 >= s_arenaCount)
 		{
-			if (!s_arenaOverflowLogged)
+			if (s_arenaCount >= kArenaMaxCount)
 			{
-				s_arenaOverflowLogged = true;
-				MC_LOG_WARN("render",
-					"3ds: vertex arenas exhausted for this frame (%d x %d vertices); draws dropped\n",
-					kArenaCount, kArenaVertices);
+				if (!s_arenaOverflowLogged)
+				{
+					s_arenaOverflowLogged = true;
+					MC_LOG_WARN("render",
+						"3ds: vertex arenas exhausted for this frame (%d x %d vertices); draws dropped\n",
+						kArenaMaxCount, kArenaVertices);
+				}
+				return nullptr;
 			}
-			return nullptr;
+			// Grow the ring instead of dropping the draw. linearAlloc
+			// mid-frame touches no arena the GPU may still be reading, and
+			// the new block is staged exactly like the boot-time ones.
+			void* grown = linearAlloc(static_cast<std::size_t>(kArenaVertices) * kVertexStride);
+			if (grown == nullptr)
+			{
+				if (!s_arenaOverflowLogged)
+				{
+					s_arenaOverflowLogged = true;
+					MC_LOG_WARN("render",
+						"3ds: vertex arena %d allocation failed; draws dropped\n",
+						s_arenaCount);
+				}
+				return nullptr;
+			}
+			s_arenas[s_arenaCount] = grown;
+			++s_arenaCount;
+			if (!s_arenaGrowthLogged)
+			{
+				s_arenaGrowthLogged = true;
+				MC_LOG_INFO("render",
+					"3ds: vertex arena ring grown to %d arenas\n",
+					s_arenaCount);
+			}
 		}
 		++s_arenaIndex;
 		s_arenaCursor = 0;
@@ -391,13 +429,27 @@ void splitCommandBufferIfNeeded()
 void dumpMeshOnce(int texture, const RenderInterleavedMesh& mesh, const GpuState& state)
 {
 	static std::unordered_set<int> s_seen;
-	if (!s_seen.insert(texture).second)
+	// Untextured draws are far too common to key by texture alone: the very
+	// first one (a startup fade quad) eats the -1 slot and the menu's
+	// gradient washes would never be captured. Key those by their first
+	// vertex colour instead, so each distinct overlay (fades, gradients,
+	// vignettes) gets its own file -- bounded in practice by the handful of
+	// styles the UI uses. Offset by two so no colour key collides with the
+	// genuine texture -1 slot.
+	int key = texture;
+	if (texture < 0 && mesh.count > 0 && mesh.data != nullptr)
+	{
+		const std::uint8_t* v = static_cast<const std::uint8_t*>(mesh.data) +
+		                        static_cast<std::size_t>(mesh.first) * mesh.stride;
+		key = -(2 + static_cast<int>(*reinterpret_cast<const std::uint32_t*>(v + 20) & 0xFFFFFFu));
+	}
+	if (!s_seen.insert(key).second)
 		return;
 
 	::mkdir("sdmc:/opticraft", 0777);
 	::mkdir("sdmc:/opticraft/dumps", 0777);
 	char path[96];
-	std::snprintf(path, sizeof(path), "sdmc:/opticraft/dumps/mesh_tex_%d.txt", texture);
+	std::snprintf(path, sizeof(path), "sdmc:/opticraft/dumps/mesh_tex_%d.txt", key);
 	std::FILE* file = std::fopen(path, "w");
 	if (file == nullptr)
 		return;
@@ -679,22 +731,26 @@ bool init()
 	C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD, GPU_ONE, GPU_ZERO,
 	               GPU_ONE, GPU_ZERO);
 
-	for (auto& arena : s_arenas)
+	for (int i = 0; i < kArenaInitialCount; ++i)
 	{
-		arena = linearAlloc(static_cast<std::size_t>(kArenaVertices) * kVertexStride);
+		void* arena = linearAlloc(static_cast<std::size_t>(kArenaVertices) * kVertexStride);
 		if (arena == nullptr)
 		{
 			MC_LOG_ERROR("render", "3ds: vertex arena allocation failed\n");
 			fini();
 			return false;
 		}
+		s_arenas[i] = arena;
 	}
+	s_arenaCount = kArenaInitialCount;
 	s_arenaIndex = 0;
 	s_arenaCursor = 0;
+	s_arenaOverflowLogged = false;
+	s_arenaGrowthLogged = false;
 
 	MC_LOG_INFO("render",
-		"3ds: citro3d up -- target %dx%d RGBA8/D24S8, %d arenas x %d vertices\n",
-		kTargetWidth, kTargetHeight, kArenaCount, kArenaVertices);
+		"3ds: citro3d up -- target %dx%d RGBA8/D24S8, %d arenas x %d vertices (growable to %d)\n",
+		kTargetWidth, kTargetHeight, kArenaInitialCount, kArenaVertices, kArenaMaxCount);
 	return true;
 }
 

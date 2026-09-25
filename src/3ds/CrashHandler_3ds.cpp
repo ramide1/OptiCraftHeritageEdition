@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "platform/Log.h"
+
 namespace
 {
 
@@ -54,6 +56,16 @@ void Crash(const std::string &message, const std::string &stackTrace)
 	// Belt and braces: a crash may have upset the stdio state the console set
 	// up, and an unflushed tail is a crash report that stops early.
 	std::fflush(stdout);
+
+	// The file log is the copy that survives the run: a report that only
+	// exists on the bottom screen is one the player has to transcribe by
+	// hand. Write straight through, regardless of the build's log level --
+	// a crash report must land in debug.log the same way the screen holds
+	// this one.
+	McLog::write(McLog::Level::Error, "crash", "%s", message.c_str());
+	if (!stackTrace.empty())
+		McLog::write(McLog::Level::Error, "crash", "%s", stackTrace.c_str());
+	McLog::flush();
 
 	waitForDismissal();
 

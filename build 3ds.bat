@@ -4,13 +4,12 @@ cd /d "%~dp0"
 
 REM Nintendo 3DS build (devkitARM + libctru)
 REM
-REM This script deliberately calls a NATIVE WINDOWS cmake by full path instead of
-REM whatever `cmake` resolves to. devkitPro's installer puts its MSYS2 bin
-REM directory on the system PATH ahead of everything else, so a bare `cmake` is
-REM the MSYS2 build even from cmd.exe. That one emits POSIX paths (/d/MC/...)
-REM into build.ninja, which the repository's native ninja.exe reads as
-REM \d\MC\... -- and the build dies inside CMake's compiler check with a
-REM misleading "the C compiler is broken" when the compiler is perfectly fine.
+REM This script calls a NATIVE WINDOWS cmake from the candidate list below
+REM instead of whatever `cmake` resolves to. devkitPro's installer puts its MSYS2
+REM bin directory on the system PATH ahead of everything else, so a bare `cmake`
+REM is the MSYS2 build even from cmd.exe. That one fails this project's CMake
+REM compiler check with a misleading "the C compiler is broken" when the compiler
+REM is perfectly fine -- verified on this machine.
 REM
 REM Same reason DEVKITPRO is dropped below when it holds a POSIX path: the
 REM installer exports DEVKITPRO=/opt/devkitpro into the Windows environment too,
@@ -46,27 +45,23 @@ for %%C in (
 )
 if defined CMAKE_EXE goto :cmakeFound
 
-REM The four paths above both miss: the per-user installer
-REM (%LocalAppData%\Programs\CMake\bin) and a portable/zip extract, whose
-REM directory carries the version (cmake-3.31.12-windows-x86_64\bin). Without
-REM this probe the script silently fell through to a bare `cmake` that is not on
-REM PATH at all and died with ""cmake" no se reconoce" before configuring.
-for /d %%D in ("%LocalAppData%\Programs\CMake\*") do (
-    if not defined CMAKE_EXE if exist "%%~D\bin\cmake.exe" set "CMAKE_EXE=%%~D\bin\cmake.exe"
-)
-if not defined CMAKE_EXE if exist "%LocalAppData%\Programs\CMake\bin\cmake.exe" set "CMAKE_EXE=%LocalAppData%\Programs\CMake\bin\cmake.exe"
-if defined CMAKE_EXE goto :cmakeFound
-
 REM Last resort, and the one that needs the warning: whatever is on PATH may be
-REM devkitPro's MSYS2 cmake (see the note at the top of this file).
+REM devkitPro's MSYS2 cmake (see the note at the top of this file) -- verified
+REM to fail this project's compiler check.
 for /f "delims=" %%M in ('where cmake 2^>nul') do if not defined CMAKE_EXE set "CMAKE_EXE=%%M"
 
 :cmakeFound
 if not defined CMAKE_EXE (
-    echo WARNING: no native Windows cmake found; falling back to whatever is on PATH.
-    echo          If that is devkitPro's MSYS2 cmake the build will fail in the
-    echo          compiler check - see the note at the top of this file.
-    set "CMAKE_EXE=cmake"
+    echo ERROR: no native Windows cmake found and none on PATH.
+    echo        Install CMake with the official installer ^(C:\Program Files\CMake^).
+    exit /b 1
+)
+echo !CMAKE_EXE! | findstr /I /C:"msys2" /C:"devkitPro" >nul
+if not errorlevel 1 (
+    echo ERROR: the cmake found is devkitPro's MSYS2 build:
+    echo        !CMAKE_EXE!
+    echo        It fails this project's compiler check - see the note at the top.
+    exit /b 1
 )
 echo Using cmake: !CMAKE_EXE!
 

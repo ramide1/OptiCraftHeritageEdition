@@ -360,6 +360,12 @@ void WorldRenderer::updateRenderer()
 	if (!needsUpdate)
 		return;
 
+#if PLATFORM_3DS
+	// See terrainStepDidWork: one call meshes one whole section, and the
+	// RenderGlobal budget wants to know whether this call produced a rebuild.
+	terrainStepDidWork = false;
+#endif
+
 	updateOcclusionBox();
 	isVisibleFromPosition = false;
 
@@ -528,6 +534,25 @@ void WorldRenderer::updateRenderer()
 	isInitialized = true;
 	tileEntityRenderers = rebuiltTileEntityRenderers;
 	needsUpdate = false;
+#if PLATFORM_3DS
+	terrainStepDidWork = true;
+#endif
+}
+#endif
+
+#if PLATFORM_3DS
+bool WorldRenderer::isTerrainBuildInProgress() const
+{
+	// The shared path meshes a whole section inside the single updateRenderer()
+	// call the budget makes; there is never a partial build in flight between
+	// frames, so the staging/deferred-build guards in RenderGlobal's scheduler
+	// simply never fire here.
+	return false;
+}
+
+bool WorldRenderer::lastTerrainBuildStepDidWork() const
+{
+	return terrainStepDidWork;
 }
 #endif
 
@@ -629,7 +654,7 @@ void WorldRenderer::markDirtyFromLighting()
 
 void WorldRenderer::setDontDraw()
 {
-	#if WII_PLATFORM || PS2_PLATFORM || PLATFORM_PC_LEGACY
+	#if WII_PLATFORM || PS2_PLATFORM || PLATFORM_PC_LEGACY || PLATFORM_3DS
 	// Whatever edit marked this renderer urgent was at its old position.
 	urgentRebuild = false;
 	#endif

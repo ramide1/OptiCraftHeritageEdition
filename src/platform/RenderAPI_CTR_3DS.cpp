@@ -72,6 +72,34 @@ int s_uploadTarget = 0;
 // the default unit's binds change what the shader samples.
 int s_activeTextureUnit = 0x84C0; // GL_TEXTURE0
 
+// GL_TEXTURE_2D is enabled *per texture unit*, and the game's lightmap path
+// depends on that: EntityRenderer::disableLightmap() does
+//     setActiveTexture(GL_TEXTURE1); glDisable(GL_TEXTURE_2D);
+// and enableLightmap() re-enables it there, intending only the lightmap
+// sampler to switch off. On one global flag (which is how this backend read
+// it until the world came back untextured) that call turns *unit 0* off as
+// well, and nothing turns it back on: every chunk section recorded after a
+// lightmap pair replays its captured state untextured -- vertex colours
+// modulating nothing, i.e. flat white blocks -- and GuiMainMenu's
+// drawPanorama, which deliberately issues no enable of its own (it assumes
+// texturing is on the way every other textured draw in the game does),
+// paints white over the menu background. The PS2 and Wii backends already
+// keep this bit per unit for exactly this reason; see
+// RenderAPI_GS_PS2.cpp and WiiNativeState's texture_enabled mask.
+//
+// Index 0 mirrors into s_state.texture2d, the only unit the PICA sampler
+// reads. Index 1 is tracked for parity so a later lightmap TexEnv stage
+// has its switch to consult.
+bool s_texture2dByUnit[2] = { false, false };
+
+// Which unit's bit a capability call touches. Only GL_TEXTURE1 (the
+// lightmap unit) is anything other than the default, matching how
+// RenderAPI_GS_PS2.cpp resolves the same question.
+int trackedTextureUnitIndex()
+{
+	return s_activeTextureUnit == 0x84C1 ? 1 : 0;
+}
+
 // Retained-mode display lists. The PICA has no GPU-side list, so the mesh
 // and fixed-function state reaching each list between Begin/End are
 // captured on the CPU and replayed through the same ds::draw path as live
@@ -291,7 +319,13 @@ void renderEnable(RenderCapability capability)
 {
 	switch (capability)
 	{
-	case RenderCapability::Texture2D: s_state.texture2d = true; break;
+	case RenderCapability::Texture2D:
+		s_texture2dByUnit[trackedTextureUnitIndex()] = true;
+		// Only unit 0 feeds the sampler; a lightmap-unit enable must not
+		// stand in for it (and must not be discarded either -- see the
+		// s_texture2dByUnit note).
+		s_state.texture2d = s_texture2dByUnit[0];
+		break;
 	case RenderCapability::Blend:     s_state.blend = true;     break;
 	case RenderCapability::DepthTest: s_state.depthTest = true; break;
 	case RenderCapability::AlphaTest: s_state.alphaTest = true; break;
@@ -308,7 +342,13 @@ void renderDisable(RenderCapability capability)
 {
 	switch (capability)
 	{
-	case RenderCapability::Texture2D: s_state.texture2d = false; break;
+	case RenderCapability::Texture2D:
+		// Per unit: this is the call EntityRenderer::disableLightmap makes
+		// while GL_TEXTURE1 is active, and it has to leave unit 0 sampling
+		// the terrain atlas.
+		s_texture2dByUnit[trackedTextureUnitIndex()] = false;
+		s_state.texture2d = s_texture2dByUnit[0];
+		break;
 	case RenderCapability::Blend:     s_state.blend = false;     break;
 	case RenderCapability::DepthTest: s_state.depthTest = false; break;
 	case RenderCapability::AlphaTest: s_state.alphaTest = false; break;

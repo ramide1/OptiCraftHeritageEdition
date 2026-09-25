@@ -1,12 +1,14 @@
 # OptiCraft Heritage
 
+[![Build](https://github.com/OptiJuegos/OptiCraftHeritageEdition/actions/workflows/build.yml/badge.svg)](https://github.com/OptiJuegos/OptiCraftHeritageEdition/actions/workflows/build.yml)
+
 OptiCraft Heritage is a heavily modified, clean-room C++ implementation of classic Minecraft-era gameplay designed around portability, low-end hardware, and console-specific optimization.
 
 This repository is not intended to be a line-for-line source translation. The runtime, platform layers, rendering paths, input backends, storage systems, user interface, asset loading, memory policies, and console support have been extensively reworked for the needs of this project.
 
 ## Project goals
 
-- Keep the implementation portable across desktop PC, PlayStation 2, and Nintendo Wii.
+- Keep the implementation portable across desktop PC, PlayStation 2, Nintendo Wii, and Nintendo 3DS.
 - Preserve the intended classic gameplay and visual behavior where practical while allowing platform-specific adaptations.
 - Run on constrained hardware through aggressive memory, rendering, chunk, and asset-loading optimizations.
 - Keep platform code isolated behind explicit backends instead of scattering host-specific logic through the game code.
@@ -22,9 +24,11 @@ This project is not affiliated with, endorsed by, or sponsored by Mojang Studios
 
 ## Supported targets
 
-### PC
+### PC (Windows, Linux, macOS)
 
-The desktop build uses SDL2, OpenGL, and the shared platform abstraction layer. A dedicated 32-bit legacy profile is available for older SSE2-class CPUs and legacy OpenGL hardware.
+The desktop build uses SDL2, OpenGL, and the shared platform abstraction layer. It is continuously built on Windows (x64, x86, and ARM64, across GCC, Clang, and MSVC toolchains, including a legacy low-end x86 profile and CPU-tuned variants), Linux (x64, x86, ARM64, and ARMv7 with GCC, plus x86_64-v3/Zen-tuned profiles), and macOS (ARM64 and x64 with Clang).
+
+A dedicated 32-bit legacy profile is available for older SSE2-class CPUs and legacy OpenGL hardware.
 
 ### PlayStation 2
 
@@ -44,30 +48,55 @@ The Wii build uses devkitPPC/libogc and a native GX rendering path. The Homebrew
 apps/OptiCraft/
 ```
 
+### Nintendo 3DS
+
+The 3DS build uses devkitARM with libctru and citro3d, with console-specific rendering, input, storage, and audio backends. Every build produces the `OptiCraft.3dsx` homebrew executable (with its `.smdh` cover) and an installable `OptiCraft.cia`, packaged straight from the `.elf` through the checked-in manifest `resources/3ds_cia.rsf`.
+
+Runtime assets are read from the SD card instead of RomFS, so data can change without rebuilding or reinstalling the CIA. The expected runtime directory is:
+
+```text
+sd:/opticraft/
+```
+
 ## Source layout
 
 ```text
 src/
+  3ds/          Nintendo 3DS implementation
   client/       Client-side shared code
+  external/     Vendored sources compiled into the game (stb_image)
   java/         Java compatibility/runtime helpers
+  locale/       Descriptive text helpers
+  lwjgl/        LWJGL-style forwarding shims
+  mods/         In-game mod loading framework and bundled mods
   net/          Game implementation
-  platform/     Shared platform interfaces and backend selection
   pc/           Desktop-specific implementation
+  platform/     Shared platform interfaces and backend selection
   ps2/          PlayStation 2 implementation
-  wii/          Nintendo Wii implementation
   util/         Shared utility code
+  wii/          Nintendo Wii implementation
 
 cmake/          Toolchains, source selection, and platform build logic
 external/       Third-party dependencies
 ```
 
-Platform targets deliberately select one implementation for each public backend. This keeps PC, PS2, and Wii implementations from accidentally entering the same link target.
+Platform targets deliberately select one implementation for each public backend. This keeps PC, PS2, Wii, and 3DS implementations from accidentally entering the same link target.
 
 ## Building
 
 CMake 3.21 or newer is required. Presets are defined in `CMakePresets.json`.
 
-### Desktop
+Most dependencies are vendored under `external/`. The one exception is SDL_net, which is gitignored and must be cloned separately before a desktop configure:
+
+```sh
+git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
+git -C external/SDL_net fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
+git -C external/SDL_net checkout FETCH_HEAD
+```
+
+Game code uses bare includes such as `#include "Minecraft.h"`, resolved against `src/net/minecraft/src`. Console toolchain files add that include path themselves; on desktop, add `-DCMAKE_CXX_FLAGS=-I<prefix>/src/net/minecraft/src` to the configure if you hit missing-header errors.
+
+### Desktop (Windows)
 
 ```text
 cmake --preset gcc-debug
@@ -81,22 +110,30 @@ cmake --preset gcc-release
 cmake --build --preset gcc-release
 ```
 
+### Desktop (Linux, macOS)
+
+The `gcc-*` presets are MinGW/Windows-specific. On Linux and macOS use a plain CMake configure, which is also what CI does:
+
+```sh
+cmake -B build/release -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DMC_LOG_LEVEL=2 \
+  "-DCMAKE_CXX_FLAGS=-I$PWD/src/net/minecraft/src"
+cmake --build build/release
+```
+
+On macOS, add `-DCMAKE_OSX_ARCHITECTURES=<arm64|x86_64>` to select the target architecture.
+
 ### 32-bit / legacy PC
 
-The CMake presets do not hardcode an MSYS2 installation path. On Windows, use:
+The 32-bit desktop builds are driven by the `gcc32-*` presets (MinGW-w64 with `-m32 -msse2 -mfpmath=sse`):
 
 ```text
-build_gcc32.bat legacy
+cmake --preset gcc32-release
+cmake --build --preset gcc32-release
 ```
 
-The batch file owns the local MSYS2 installation path instead of exposing it through CMake. To use another installation without editing the project:
-
-```bat
-set OPTICRAFT_MSYS2_ROOT=D:\Tools\msys64
-build_gcc32.bat legacy
-```
-
-The accepted modes are `debug`, `release`, and `legacy`.
+Use `gcc32-debug` for a debug build, and `gcc32-legacy-release` for the low-end profile targeting SSE2-class CPUs and legacy OpenGL hardware (reduced logging, `bin/Release` output layout). The wrappers `build gcc - release32.bat` and `build gcc - release32 - ultralowend.bat` drive the `gcc32-release` and `gcc32-legacy-release` presets respectively, picking a native Windows CMake automatically.
 
 ### PlayStation 2
 
@@ -105,7 +142,13 @@ cmake --preset ps2-release
 cmake --build --preset ps2-release
 ```
 
-Use `ps2-debug` for a debug build. Asset staging remains a separate step so large runtime data is not recopied after every link.
+Use `ps2-debug` for a debug build. Asset staging remains a separate step so large runtime data is not recopied after every link:
+
+```text
+cmake --build --preset ps2-release --target ps2-data
+```
+
+The maintained wrapper `build ps2.bat` drives the same flow (`build ps2.bat data` stages the assets). The ps2dev toolchain is expected at `./psdevwindows/`; the preset exports `PS2DEV`/`PS2SDK` itself.
 
 ### Nintendo Wii
 
@@ -114,7 +157,16 @@ cmake --preset wii-release
 cmake --build --preset wii-release
 ```
 
-Use `wii-debug` for a debug build and `wii-bringup` for the minimal hardware/toolchain bring-up target.
+Use `wii-debug` for a debug build and `wii-bringup` for the minimal hardware/toolchain bring-up target. The maintained wrapper `build wii.bat game` drives the release build; devkitPPC is found at `C:\devkitPro` or via `DEVKITPRO`.
+
+### Nintendo 3DS
+
+```text
+cmake --preset 3ds-release
+cmake --build --preset 3ds-release
+```
+
+Use `3ds-debug` for a debug build and `3ds-bringup` for the minimal toolchain bring-up smoke test. The maintained wrapper `build 3ds.bat` drives the release build and packages the installable `OptiCraft.cia` with `makerom`. devkitARM is found at `C:\devkitPro` or via `DEVKITPRO`.
 
 ## Development notes
 

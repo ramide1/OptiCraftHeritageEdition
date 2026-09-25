@@ -116,6 +116,10 @@ std::uint32_t g_suppressed = 0;
 // -- the same diffing WiiPadState::flushKeysAndButtons() does.
 std::uint32_t g_prevGameplay = 0;
 
+// Menu-context navigation edges (see updateGameplay): the D-pad and A/B
+// pushed as keyboard arrow/return/escape codes while a screen is up.
+std::uint32_t g_prevMenuNav = 0;
+
 // Mouse button levels. Button 0 is driven by the touch tap OR GP_ATTACK, so
 // they are tracked together rather than per source.
 bool g_prevBtn0 = false;
@@ -193,6 +197,10 @@ void updateGameplay(u32 keys, bool touchDown)
 		// Latched menu edges must not cross the boundary in either
 		// direction -- Ps2InputMapper clears them on both transitions.
 		g_latchedPressed = 0;
+		// The navigation pushes below seed from here, so a button held at
+		// the boundary does not fire a menu navigation step it was never
+		// pressed for; it navigates on its next fresh press instead.
+		g_prevMenuNav = held;
 	}
 	g_suppressed &= held; // forget buttons that have since been released
 
@@ -215,6 +223,29 @@ void updateGameplay(u32 keys, bool touchDown)
 	if (changed & GP_DPAD_DOWN)  lwjgl::Keyboard::detail::pushKey(DS_KEY_DPAD_DOWN, (active & GP_DPAD_DOWN) != 0);
 	if (changed & GP_DPAD_LEFT)  lwjgl::Keyboard::detail::pushKey(DS_KEY_DPAD_LEFT, (active & GP_DPAD_LEFT) != 0);
 	if (changed & GP_DPAD_RIGHT) lwjgl::Keyboard::detail::pushKey(DS_KEY_DPAD_RIGHT, (active & GP_DPAD_RIGHT) != 0);
+
+	// Menu navigation (the console's menu schema). The legacy screens'
+	// keyTyped handlers listen for the keyboard arrow/return/escape codes,
+	// which nothing else on this console emits -- the gameplay pushes above
+	// are gated off in menus by design, so the D-pad and A never reached them
+	// and the menu sat there deaf to the D-pad. In menu context those buttons
+	// deliver the navigation codes directly, both edges like every push
+	// above; in gameplay the same buttons keep their action meanings through
+	// the key bindings and these codes are not pushed at all. START's
+	// KEY_ESCAPE (forwardStartToEscape) already covers back/exit as a fixed
+	// system role; B here is the screens' own back button.
+	const std::uint32_t navActive = g_inMenu
+	    ? (held & (GP_DPAD_UP | GP_DPAD_DOWN | GP_DPAD_LEFT | GP_DPAD_RIGHT |
+	               GP_JUMP | GP_USE))
+	    : 0u;
+	const std::uint32_t navChanged = navActive ^ g_prevMenuNav;
+	if (navChanged & GP_DPAD_UP)    lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_UP, (navActive & GP_DPAD_UP) != 0);
+	if (navChanged & GP_DPAD_DOWN)  lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_DOWN, (navActive & GP_DPAD_DOWN) != 0);
+	if (navChanged & GP_DPAD_LEFT)  lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_LEFT, (navActive & GP_DPAD_LEFT) != 0);
+	if (navChanged & GP_DPAD_RIGHT) lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_RIGHT, (navActive & GP_DPAD_RIGHT) != 0);
+	if (navChanged & GP_JUMP)       lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_RETURN, (navActive & GP_JUMP) != 0);
+	if (navChanged & GP_USE)        lwjgl::Keyboard::detail::pushKey(lwjgl::Keyboard::KEY_ESCAPE, (navActive & GP_USE) != 0);
+	g_prevMenuNav = navActive;
 
 	const int x = g_state.pointerX;
 	const int y = g_state.pointerY;
@@ -281,6 +312,7 @@ void dsInputInit(int screenW, int screenH)
 	g_prevInMenu = false;
 	g_suppressed = 0;
 	g_prevGameplay = 0;
+	g_prevMenuNav = 0;
 	g_prevBtn0 = false;
 	g_prevBtn1 = false;
 }
