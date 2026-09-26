@@ -134,9 +134,15 @@ else()
     configure_file("${CMAKE_SOURCE_DIR}/external/zlib/zconf.h.cmakein"
                    "${3DS_ZLIB_GEN_DIR}/zconf.h" @ONLY)
 
-    # The 3DS audio backend will use stb_vorbis without pulling the desktop SDL
-    # backend into the target (same wiring as the Wii).
-    list(APPEND 3DS_SOURCES "${CMAKE_SOURCE_DIR}/src/pc/external/stb_vorbis.cpp")
+    # The 3DS audio backend consumes the PS2's ADP assets (SPU2-ADPCM,
+    # adpenc output -- see src/platform/audio/SoundManager_3DS.cpp), decoded
+    # with the portable software decoder the PS2 streamer uses. That single
+    # file is listed here explicitly: it lives under src/ps2/audio but is
+    # pure C++ with no PS2 SDK dependency -- the same cross-tree listing
+    # shape stb_vorbis.cpp had here before the backend switched from OGG to
+    # ADP (with that switch, stb_vorbis and the desktop OGG tree leave this
+    # target entirely).
+    list(APPEND 3DS_SOURCES "${CMAKE_SOURCE_DIR}/src/ps2/audio/Ps2AdpcmStreamDecoder.cpp")
 
     # Wii stores stats locally, so the desktop synchronizer/JSON/MD5 stack is
     # unreachable and must not enter the target. Same on 3DS (saves are on SD).
@@ -420,7 +426,7 @@ add_custom_target(3ds-data
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/data/assets" "${3DS_APP_DIR}/data/assets"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/data/resources" "${3DS_APP_DIR}/data/resources"
+            "${CMAKE_SOURCE_DIR}/data/resources_ps2" "${3DS_APP_DIR}/data/resources"
     COMMENT "Staging data/ into ${3DS_APP_DIR}/data"
     VERBATIM
 )

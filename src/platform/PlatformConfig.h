@@ -87,8 +87,15 @@
 #  define PLATFORM_RANDOM_SPLIT_MULTIPLY (PLATFORM_PS2 || PLATFORM_WII)
 #endif
 
+// The 3DS circle pad feeds the same PlatformGamepadSnapshot the PS2's sticks
+// do (InputBackend_3DS -> platformGamepadSnapshot), and the movement consumer
+// (MovementInputFromOptions) only reads those axes under this flag -- without
+// it the D-pad moves the player while the circle pad stays dead. The 3DS
+// backend applies the same deadzone+rescale the PS2's Ps2AnalogFilter gives
+// its sticks at the same place, so the axes arrive filtered the way the
+// movement code already expects.
 #ifndef PLATFORM_DIRECT_ANALOG_MOVEMENT
-#  define PLATFORM_DIRECT_ANALOG_MOVEMENT PLATFORM_PS2
+#  define PLATFORM_DIRECT_ANALOG_MOVEMENT (PLATFORM_PS2 || PLATFORM_3DS)
 #endif
 
 #ifndef PLATFORM_ASYNC_CHUNK_GENERATION
@@ -157,7 +164,11 @@
 #endif
 
 #ifndef PLATFORM_PROFILE_RENDER_PHASES
-#  define PLATFORM_PROFILE_RENDER_PHASES (PLATFORM_PS2 || PLATFORM_WII)
+// The 3DS joins the consoles here: its ClientProfilerBackend_3DS already
+// accumulates the same phase buckets ([3ds.perf] renderPhase(ms)), and the
+// per-phase breakdown is the only way to tell a replay-bound frame from a
+// mesh-build-bound one before touching the draw path.
+#  define PLATFORM_PROFILE_RENDER_PHASES (PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS)
 #endif
 
 #ifndef PLATFORM_NATIVE_TERRAIN_PIPELINE

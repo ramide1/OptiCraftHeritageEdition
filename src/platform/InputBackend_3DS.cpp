@@ -5,9 +5,10 @@
 // PLATFORM_TEXT_* mask for an open screen, the gameplay channel for a closed
 // one, touch -> absolute pointer in top-screen pixels, circle pad -> stick
 // axes), and this file only reshapes it into the shared structs. The
-// circle-pad axes ride in platformGamepadSnapshot() exactly as the Wii's
-// stick snapshot does; there is no second stick, so the right-side fields
-// stay zero and raw == filtered (DsInput.h keeps deadzones downstream).
+// circle-pad axes ride in platformGamepadSnapshot() with the same
+// deadzone+rescale the PS2 backend applies (Ps2AnalogFilter); the raw variant
+// stays unfiltered for the calibration screens, and there is no second stick,
+// so the right-side fields stay zero.
 //
 // Note on the mode flags Input.h also declares (text-input-exclusive,
 // container-navigation, pad-rebind): those are NOT part of the backend half --
@@ -19,6 +20,32 @@
 #include "platform/Input.h"
 
 #include "3ds/input/DsInput.h"
+
+#include <cmath>
+
+namespace
+{
+// The deadzone+rescale Ps2AnalogFilter::apply performs for the PS2 at exactly
+// this spot in InputBackend_PS2. DsInput publishes raw -1..1 axes ("deadzones
+// are downstream", DsInput.h) and MovementInputFromOptions -- compiled in on
+// this platform through PLATFORM_DIRECT_ANALOG_MOVEMENT -- applies no
+// deadzone of its own, so without this filter a circle pad resting a few
+// counts off centre creeps the player around the world.
+constexpr float kStickDeadzone = 0.20f;
+
+float applyStickDeadzone(float value)
+{
+    if (value > -kStickDeadzone && value < kStickDeadzone)
+        return 0.0f;
+    const float sign = value < 0.0f ? -1.0f : 1.0f;
+    float magnitude = (std::abs(value) - kStickDeadzone) / (1.0f - kStickDeadzone);
+    if (magnitude < 0.0f)
+        magnitude = 0.0f;
+    if (magnitude > 1.0f)
+        magnitude = 1.0f;
+    return magnitude * sign;
+}
+}
 
 PlatformTextInputSnapshot platformTextInputSnapshot(int port)
 {
@@ -46,16 +73,28 @@ PlatformGamepadSnapshot platformGamepadSnapshot(int port)
     PlatformGamepadSnapshot out;
     const DsInputState& ds = dsInputState();
     out.connected = ds.stickConnected;
-    out.leftX = ds.stickX;
-    out.leftY = ds.stickY; // up-positive, same convention as the Wii stick
+    // Deadzone applied here, mirroring InputBackend_PS2 -> Ps2AnalogFilter.
+    // The Y axis is down-positive (stick up reads negative), which is the
+    // raw-joystick contract MovementInputFromOptions negates into "forward" --
+    // the same convention the PS2 publishes. GuiScreen's own +-0.20 menu
+    // threshold still sees a fully deflected stick as +-1.0 after the
+    // rescale, so nothing downstream needs to know the filter moved.
+    out.leftX = applyStickDeadzone(ds.stickX);
+    out.leftY = applyStickDeadzone(ds.stickY);
     return out;
 }
 
 PlatformGamepadSnapshot platformRawGamepadSnapshot(int port)
 {
-    // Already raw: DsInput publishes unfiltered -1..1 axes (deadzone handling
-    // is downstream), so there is no filtered variant to distinguish from.
-    return platformGamepadSnapshot(port);
+    // Deliberately unfiltered: the GuiDeadzoneSettings calibration screen and
+    // any future tuning UI want the pad exactly as the hardware reports it.
+    // This is the same filtered/raw split InputBackend_PS2 keeps.
+    PlatformGamepadSnapshot out;
+    const DsInputState& ds = dsInputState();
+    out.connected = ds.stickConnected;
+    out.leftX = ds.stickX;
+    out.leftY = ds.stickY;
+    return out;
 }
 
 int platformMenuPad()

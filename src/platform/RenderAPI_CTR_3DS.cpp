@@ -414,11 +414,34 @@ void renderSetLightmapColors(const std::uint32_t* colors, int count)
 	(void)colors; (void)count;
 }
 
-void renderColor4f(float, float, float, float) {}
-void renderColor3f(float, float, float) {}
+// GL's current-colour register. The tessellator bakes a colour into vertex
+// data when one was set between begin/end, but a draw whose vertices carry
+// none (the sky dome, the horizon band, the sun/moon quads) takes the last
+// colour set through this path -- that is the whole of GL's fixed-function
+// current colour, and ds::draw writes it into the staged colour words of
+// every hasColor == false mesh. PS2/Wii keep the same register (see
+// ps2_render_color4f and WiiNativeState's current_color); until this was
+// wired the 3DS dropped it, and those draws came out with whatever the
+// capture path had parked in the colour words instead of the sky colour
+// the game had set with renderColor3f.
+void renderColor4f(float r, float g, float b, float a)
+{
+	s_state.currentColor[0] = r;
+	s_state.currentColor[1] = g;
+	s_state.currentColor[2] = b;
+	s_state.currentColor[3] = a;
+}
+
+void renderColor3f(float r, float g, float b)
+{
+	renderColor4f(r, g, b, 1.0f);
+}
+
 void renderNormal3f(float, float, float) {}
-// Immediate-mode colour/normal state: the Tessellator bakes both into vertex
-// data itself, so no backend-side current-colour register exists to keep.
+// Normals still have no backend register to keep: the Tessellator bakes them
+// into vertex data and the PICA milestone applies lighting through vertex
+// colours, so there is nothing on the hardware side to feed (the fixed
+// attribute slot stays loaded and unread).
 
 // ---------------------------------------------------------------------------
 // Textures

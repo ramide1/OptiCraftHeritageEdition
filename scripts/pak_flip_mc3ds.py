@@ -50,7 +50,6 @@ import sys
 import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pak_extract import read_pak  # noqa: E402  (same directory)
 
 MAGIC = b"MCPK"
 VERSION = 1
@@ -66,6 +65,39 @@ DEFAULT_XYFLIP = ("assets/skins/*.png",)
 
 class SkipPng(Exception):
     """The image is a PNG this flipper cannot rewrite; leave it verbatim."""
+
+
+def read_pak(path):
+    """Yields (key, payload bytes) for every entry, in table order."""
+    with open(path, "rb") as pak:
+        header = pak.read(HEADER_BYTES)
+        if len(header) != HEADER_BYTES:
+            raise SystemExit("%s: too short for an MCPK header" % path)
+        magic, version, count, table_offset, names_offset, names_bytes, data_align, _ = (
+            struct.unpack(">4sIIIIIII", header))
+        if magic != MAGIC:
+            raise SystemExit("%s: not an MCPK pak (magic %r)" % (path, magic))
+        if version != 1:
+            raise SystemExit("%s: MCPK version %d not supported (expected 1)"
+                             % (path, version))
+        if data_align <= 0:
+            raise SystemExit("%s: nonsensical dataAlign %d" % (path, data_align))
+
+        pak.seek(names_offset)
+        names_blob = pak.read(names_bytes)
+        if len(names_blob) != names_bytes:
+            raise SystemExit("%s: names region truncated" % path)
+
+        for i in range(count):
+            pak.seek(table_offset + i * ENTRY_BYTES)
+            _, name_offset, data_offset, size = struct.unpack(">IIII", pak.read(ENTRY_BYTES))
+            end = names_blob.find(b"\0", name_offset)
+            key = names_blob[name_offset:end].decode("utf-8")
+            pak.seek(data_offset)
+            payload = pak.read(size)
+            if len(payload) != size:
+                raise SystemExit("%s: entry %s truncated" % (path, key))
+            yield key, payload
 
 
 def chunk_crc(chunk_type, payload):

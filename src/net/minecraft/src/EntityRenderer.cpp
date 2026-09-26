@@ -1643,8 +1643,18 @@ void EntityRenderer::renderWorld(float partialTicks, int64_t renderTimeLimitNano
         
         ClippingHelperImpl::getInstance();
         
-        // Renderizar cielo (solo en distancias cortas)
-        if (mc->gameSettings->renderDistance < 2)
+        // Renderizar cielo (solo en distancias cortas). The 3DS renders it
+        // at every distance: DsWorldTuning pins its render distance to
+        // TINY (distance 3), and RenderAPI_CTR_3DS has no PICA fog unit
+        // behind setupFog to blend the terrain edge into the clear colour,
+        // so skipping the pass leaves the fog-coloured clear reading as a
+        // gray/black sky instead of one.
+#if defined(CTR_PLATFORM)
+        const bool renderSkyPass = true;
+#else
+        const bool renderSkyPass = mc->gameSettings->renderDistance < 2;
+#endif
+        if (renderSkyPass)
         {
             setupFog(-1, partialTicks);
 #if PLATFORM_PROFILE_RENDER_PHASES

@@ -121,8 +121,8 @@ if defined DODATA (
         xcopy /E /I /Y /Q "data\assets" "!SDDATA!\data\assets"
         if errorlevel 1 goto :fail
     )
-    if exist "data\resources" (
-        xcopy /E /I /Y /Q "data\resources" "!SDDATA!\data\resources"
+    if exist "data\resources_ps2" (
+        xcopy /E /I /Y /Q "data\resources_ps2" "!SDDATA!\data\resources"
         if errorlevel 1 goto :fail
     )
     echo.

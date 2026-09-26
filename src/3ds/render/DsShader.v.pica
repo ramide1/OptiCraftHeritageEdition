@@ -22,9 +22,16 @@
 ; DsRender.cpp as:
 ;   v0 float3     position                          (bytes  0..11)
 ;   v1 float2     texcoord                          (bytes 12..19)
-;   v2 u8x4       colour, RGBA, normalised [0,1]    (bytes 20..23)
-;   v3 s8x4       normal xyz + pad, normalised      (bytes 24..27)
+;   v2 u8x4       colour, RGBA, raw 0..255          (bytes 20..23)
+;   v3 s8x4       normal xyz + pad, raw -128..127   (bytes 24..27)
 ;   v4 float      brightness (lightmap coordinate)  (bytes 28..31)
+;
+; The PICA200 vertex loader does NOT normalise integer attribute formats:
+; GPUREG_ATTRIBBUFFERS_FORMAT carries only a 2-bit type per attribute with no
+; normalise bit (see 3dbrew, GPU/Internal Registers), and devkitPro's
+; loop_subdivision example loads a u8 valence its geometry shader consumes as
+; a raw integer. A colour attribute therefore arrives here as 0..255 and has
+; to be rescaled by this shader -- see the outclr multiply below.
 ;
 ; texScale exists because PICA textures must be power-of-two and within
 ; 8..1024 while the game's are not always: DsTexture.cpp allocates the
@@ -38,6 +45,8 @@
 .constf myconst(0.0, 1.0, -1.0, -0.5)
 .alias  zeros myconst.xxxx ; Vector full of zeros
 .alias  ones  myconst.yyyy ; Vector full of ones
+.constf colourScale(0.00392156862745098, 0.00392156862745098, 0.00392156862745098, 0.00392156862745098)
+.alias  inv255 colourScale.xxxx ; 1/255 splatted: rescale the raw u8x4 colour to [0,1]
 
 ; Outputs
 .out outpos position
@@ -78,9 +87,15 @@
 	mov r3.w, ones
 	mov outtc0, r3
 
-	; Vertex colour straight through -- the PICA normalises the u8x4 on load,
-	; so this is the "primary colour" TexEnv modulates the texture with.
-	mov outclr, inclr
+	; Vertex colour rescaled from the loader's raw 0..255 into the [0,1] the
+	; TexEnv inputs clamp to (see the attribute note in the header). Missing
+	; this multiply was the "everything clamps to white" bug: grayscale
+	; grass/leaf tiles modulated with a full-white "tint" stayed gray, the
+	; per-face brightness factors flattened to full bright, and any overlay
+	; alpha in 1..254 clamped to opaque -- the gray/black flashes over the
+	; sky. The constant is the first source for the same two-source ALU
+	; reason texScale is above.
+	mul outclr, inv255, inclr
 
 	end
 .end

@@ -44,6 +44,15 @@ struct GpuState
 	bool colorWriteG = true;
 	bool colorWriteB = true;
 	bool colorWriteA = true;
+
+	// GL's current-colour register (glColor4f/glColor3f): the colour taken by
+	// every vertex that arrives without one baked into the mesh -- the sky
+	// dome, the horizon band, the sun/moon quads, GUI overlays. renderColor4f
+	// stores it here and ds::draw writes it into the staged colour words of a
+	// hasColor == false mesh, which is exactly the semantic the PS2/Wii
+	// backends implement (ps2_render_color4f, WiiNativeState's current_color)
+	// and GL spells with the fixed-function current colour.
+	float currentColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 // Lifecycle. init() brings up C3D, the shader and the render target; it is

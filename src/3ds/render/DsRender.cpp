@@ -121,9 +121,13 @@ constexpr int kPanelHeight = 240;
 // The fixed 32-byte Minecraft vertex, loaded as five attributes in order.
 // The colour attribute is u8x4 in R,G,B,A byte order: the Tessellator packs
 // (A<<24)|(B<<16)|(G<<8)|R on this little-endian target (Tessellator.cpp,
-// setColorRGBA), which is that byte sequence, and the PICA normalises
-// integer attribute formats on load -- colour arrives in [0,1], normals in
-// [-1,1] (the fourth normal byte is padding and unread).
+// setColorRGBA), which is that byte sequence. The PICA200 vertex loader does
+// NOT normalise integer attribute formats (GPUREG_ATTRIBBUFFERS_FORMAT has a
+// 2-bit type per attribute and no normalise bit; devkitPro's loop_subdivision
+// example feeds a u8 valence to its geometry shader as a raw integer), so the
+// colour arrives in the shader as raw 0..255 and DsShader.v.pica rescales it
+// to [0,1] before it reaches the TexEnv inputs. The fourth normal byte is
+// padding and unread.
 constexpr int kVertexStride = 32;
 constexpr int kAttribCount = 5;
 // Attribute k feeds shader input register k, for all five: 0x43210.
@@ -946,6 +950,26 @@ bool draw(const RenderInterleavedMesh& mesh, const GpuState& state)
 	else
 	{
 		std::memcpy(staging, src, static_cast<std::size_t>(outCount) * kVertexStride);
+	}
+
+	// GL's current colour: vertices a mesh does not colour itself take the
+	// one renderColor4f/3f last set -- the sky dome, the horizon band, the
+	// sun/moon quads, the colourless GUI overlays. The tessellator leaves
+	// those colour words unwritten (stale slots in the shared raw buffer)
+	// and capture paths store white in them, so the register is applied
+	// here, to the staged copy only, after the quad expansion so every
+	// emitted vertex gets it. The packing matches the Tessellator's
+	// little-endian layout: bytes R,G,B,A from the lowest address up.
+	if (!mesh.hasColor)
+	{
+		const u32 packedColor =
+		    (static_cast<u32>(clamp01(state.currentColor[3]) * 255.0f + 0.5f) << 24) |
+		    (static_cast<u32>(clamp01(state.currentColor[2]) * 255.0f + 0.5f) << 16) |
+		    (static_cast<u32>(clamp01(state.currentColor[1]) * 255.0f + 0.5f) << 8) |
+		     static_cast<u32>(clamp01(state.currentColor[0]) * 255.0f + 0.5f);
+		for (int i = 0; i < outCount; ++i)
+			*reinterpret_cast<u32*>(staging + static_cast<std::size_t>(i) * kVertexStride + 20) =
+			    packedColor;
 	}
 
 	splitCommandBufferIfNeeded();
