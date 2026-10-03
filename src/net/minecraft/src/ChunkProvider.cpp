@@ -109,7 +109,7 @@ ChunkProvider::ChunkProvider(World *world, IChunkLoader *ichunkloader, IChunkPro
 	    (asyncRegionLoader != nullptr || asyncAnvilLoader != nullptr))
 	{
 		asyncSavedChunkProbe = asyncRegionLoader == nullptr ? asyncAnvilLoader : nullptr;
-#if PLATFORM_PC_LEGACY || PLATFORM_WII
+#if PLATFORM_PC_LEGACY || PLATFORM_WII || PLATFORM_3DS
 		// The worker only builds terrain/cave buffers. Structure discovery,
 		// decoration, Chunk construction, lighting and publication stay on the
 		// game thread: the per-biome BiomeDecorator and the chunk-local
@@ -422,6 +422,16 @@ bool ChunkProvider::drainAsyncGeneratedChunks(int_t budget)
 {
 	if (asyncGenerationScheduler == nullptr || budget <= 0)
 		return false;
+
+#if PLATFORM_STREAMING_FRAME_BUDGET_US > 0
+	// The publish is the one async step that cannot be sliced: structures,
+	// chunk-local decoration, the Chunk constructor and the initial skylight
+	// map all run on the game thread in a single go, once per published
+	// column. Charging it to the frame's shared streaming allowance means the
+	// populate and lighting drains behind it in the same frame degrade to
+	// their one-step minimum instead of stacking their full ceilings on top.
+	PlatformStreamingFrameBudgetScope frameBudgetScope;
+#endif
 
 	bool published = false;
 	for (int_t n = 0; n < budget; ++n)
