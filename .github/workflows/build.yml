@@ -513,7 +513,7 @@ jobs:
           msystem: MINGW32
           path-type: minimal
           update: true
-          suppress-deprecation-warnings: ['msystem-mingw32']
+          suppress-deprecation-warnings: msystem-mingw32
           cache: ${{ matrix.cache-msys2 }}
           install: >-
             mingw-w64-i686-gcc
