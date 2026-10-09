@@ -227,6 +227,16 @@ set(ALSOFT_UPDATE_BUILD_VERSION OFF CACHE BOOL "" FORCE)
 # recent MinGW. The classic-header path is fully supported upstream.
 set(ALSOFT_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/openal-soft EXCLUDE_FROM_ALL)
+# Xcode 26 (clang) activa -Werror=function-effects y OpenAL Soft 1.25.2
+# todavía no envuelve las lambdas de coreaudio.cpp en
+# "#pragma clang diagnostic ignored \"-Wfunction-effects\"". Sin esto el
+# backend de CoreAudio falla con:
+#   error: attribute 'nonblocking' should not be added via type conversion
+# Solo se relaja este warning para el target OpenAL; el resto del proyecto
+# conserva la política estricta.
+if(TARGET OpenAL AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(OpenAL PRIVATE -Wno-error=function-effects)
+endif()
 
 # --- Microsoft account login ------------------------------------------------
 # The flow itself is common code (src/net/minecraft/src/MicrosoftAuthFlow.cpp
@@ -359,6 +369,7 @@ endif()
 target_include_directories(OptiCraft PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/pc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/net/minecraft/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/stb"
     "${CMAKE_CURRENT_SOURCE_DIR}/external/zlib/contrib/minizip"
 )

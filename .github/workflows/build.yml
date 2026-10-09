@@ -186,22 +186,40 @@ jobs:
     container:
       image: devkitpro/devkitarm:20260610
     steps:
-      # unzip/curl fetch makerom (CIA-only; neither affects the .elf/.3dsx
-      # build itself). autoconf / automake / libtool used to be here to build
-      # cxitool from source, and python3 only existed to run the packaging
-      # helper script -- both are gone: the .cia is now a bare makerom call in
-      # the Package step below, against the checked-in resources/3ds_cia.rsf.
+      # 3ds-curl (+3ds-mbedtls, +3ds-zlib portlibs): the QR downloader
+      # (src/3ds/qr) links libcurl because the system ssl:C tops out at
+      # TLS 1.1, which modern hosts (Google Drive, Cloudflare CDNs) no
+      # longer accept. cmake/3ds.cmake FATAL_ERRORs without these.
+      # Debian-based devkitPro images expose their pacman fork as
+      # dkp-pacman -- plain `pacman` is the Arch name only and is NOT on
+      # PATH here (2026-10-02: `pacman: not found`).
       - name: Install build dependencies
         run: |
           apt update && apt install -y git cmake ninja-build ccache pkg-config unzip curl
-          # 3ds-curl (+3ds-mbedtls, +3ds-zlib portlibs): the QR downloader
-          # (src/3ds/qr) links libcurl because the system ssl:C tops out at
-          # TLS 1.1, which modern hosts (Google Drive, Cloudflare CDNs) no
-          # longer accept. cmake/3ds.cmake FATAL_ERRORs without these.
+
+      - name: Cache devkitPro 3ds portlibs (3ds-curl)
+        id: cache-dkp-3ds-curl
+        uses: actions/cache@v6
+        with:
+          # dkp-pacman lives under /opt/devkitpro inside the container:
+          #   portlibs/3ds                 -> the .a/.h files themselves
+          #   pacman/var/lib/pacman/local  -> the "installed packages" DB,
+          #                                  which is what --needed consults
+          path: |
+            /opt/devkitpro/portlibs/3ds
+            /opt/devkitpro/pacman/var/lib/pacman/local
+          # Manual bump: raise this whenever you change the image tag or
+          # want to force a fresh 3ds-curl download (no hash-based key,
+          # because pacman resolves the package against devkitPro mirrors).
+          key: dkp-3ds-curl-2026-10-09
+
+      - name: Install 3ds-curl portlib
+        if: steps.cache-dkp-3ds-curl.outputs.cache-hit != 'true'
+        run: |
           # Debian-based devkitPro images expose their pacman fork as
-          # dkp-pacman -- plain `pacman` is the Arch name only and is NOT on
-          # PATH here (2026-10-02: `pacman: not found`). --needed keeps the
-          # step a no-op if a future image bakes the portlibs in.
+          # dkp-pacman -- plain `pacman` is the Arch name only and is NOT
+          # on PATH here (2026-10-02: `pacman: not found`). --needed keeps
+          # the step a no-op if a future image bakes the portlibs in.
           DKP_PACMAN="$(command -v dkp-pacman || command -v pacman || true)"
           if [ -z "$DKP_PACMAN" ]; then
             echo "::error::the devkitpro/devkitarm image ships neither dkp-pacman nor pacman"
@@ -371,7 +389,6 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_MAKE_PROGRAM=ninja
           -DMC_LOG_LEVEL=2
-          "-DCMAKE_CXX_FLAGS=-I${{ github.workspace }}/src/net/minecraft/src"
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
@@ -451,7 +468,7 @@ jobs:
           -DCMAKE_MAKE_PROGRAM=ninja
           -DMC_LOG_LEVEL=2
           "-DCMAKE_C_FLAGS=${{ matrix.march }}"
-          "-DCMAKE_CXX_FLAGS=${{ matrix.march }} -I${{ github.workspace }}/src/net/minecraft/src"
+          "-DCMAKE_CXX_FLAGS=${{ matrix.march }}"
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
@@ -525,7 +542,7 @@ jobs:
         run: |
           cmake --preset ${{ matrix.preset }} \
             -DCMAKE_MAKE_PROGRAM=ninja \
-            "-DCMAKE_CXX_FLAGS=-m32 -msse2 -mfpmath=sse -I$(cygpath -m "$PWD")/src/net/minecraft/src"
+            "-DCMAKE_CXX_FLAGS=-m32 -msse2 -mfpmath=sse"
 
       - name: Build
         shell: msys2 {0}
@@ -584,7 +601,6 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_MAKE_PROGRAM=ninja \
             -DMC_LOG_LEVEL=2 \
-            "-DCMAKE_CXX_FLAGS=-I$(cygpath -m "$PWD")/src/net/minecraft/src" \
             -DCMAKE_EXE_LINKER_FLAGS=-static
 
       - name: Build
@@ -617,11 +633,6 @@ jobs:
           submodules: recursive
 
       - name: Configure
-        # CXXFLAGS env is used (appended to cl's default /DWIN32 /W3 /EHsc via
-        # CMAKE_CXX_FLAGS_INIT) instead of -DCMAKE_CXX_FLAGS, which would replace
-        # those defaults.
-        env:
-          CXXFLAGS: -I${{ github.workspace }}/src/net/minecraft/src
         run: cmake -B build/msvc-release -G "Visual Studio 18 2026" -A x64 -DMC_LOG_LEVEL=2
 
       - name: Build
@@ -681,7 +692,6 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_MAKE_PROGRAM=ninja
           -DMC_LOG_LEVEL=2
-          "-DCMAKE_CXX_FLAGS=-I$GITHUB_WORKSPACE/src/net/minecraft/src"
           -DGLFW_BUILD_WAYLAND=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -771,7 +781,7 @@ jobs:
           -DCMAKE_MAKE_PROGRAM=ninja
           -DMC_LOG_LEVEL=2
           "-DCMAKE_C_FLAGS=${{ matrix.march }}"
-          "-DCMAKE_CXX_FLAGS=${{ matrix.march }} -I$GITHUB_WORKSPACE/src/net/minecraft/src"
+          "-DCMAKE_CXX_FLAGS=${{ matrix.march }}"
           -DGLFW_BUILD_WAYLAND=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -843,7 +853,7 @@ jobs:
           -DCMAKE_MAKE_PROGRAM=ninja
           -DMC_LOG_LEVEL=2
           -DCMAKE_C_FLAGS="-m32 -msse2 -mfpmath=sse"
-          "-DCMAKE_CXX_FLAGS=-m32 -msse2 -mfpmath=sse -I$GITHUB_WORKSPACE/src/net/minecraft/src"
+          "-DCMAKE_CXX_FLAGS=-m32 -msse2 -mfpmath=sse"
           -DCMAKE_EXE_LINKER_FLAGS=-m32
           -DCMAKE_SHARED_LINKER_FLAGS=-m32
           -DCMAKE_MODULE_LINKER_FLAGS=-m32
@@ -937,7 +947,6 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_MAKE_PROGRAM=ninja
           -DMC_LOG_LEVEL=2
-          "-DCMAKE_CXX_FLAGS=-I$GITHUB_WORKSPACE/src/net/minecraft/src"
           -DOpenGL_GL_PREFERENCE=LEGACY
           -DOPENGL_gl_LIBRARY=/usr/lib/arm-linux-gnueabihf/libGL.so.1
           -DSDL_VIDEO_DRIVER_WAYLAND=OFF
@@ -1036,7 +1045,6 @@ jobs:
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
           -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }}
           -DMC_LOG_LEVEL=2
-          "-DCMAKE_CXX_FLAGS=-I$GITHUB_WORKSPACE/src/net/minecraft/src"
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 

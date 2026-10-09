@@ -273,10 +273,6 @@ target_include_directories(OptiCraft PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/src/pc"
     "${CMAKE_SOURCE_DIR}/src/3ds"
-    # Game code does bare #include "Minecraft.h" / "Tessellator.h" into
-    # src/net/minecraft/src. CI injects this via CMAKE_CXX_FLAGS on other
-    # platforms; add it here directly (as cmake/ps2.cmake does) so a local
-    # configure works without extra flags.
     "${CMAKE_SOURCE_DIR}/src/net/minecraft/src"
     "${CMAKE_SOURCE_DIR}/external/stb"
     "${CMAKE_SOURCE_DIR}/external/zlib/contrib/minizip"
