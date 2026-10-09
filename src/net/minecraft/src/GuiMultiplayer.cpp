@@ -26,6 +26,7 @@
 #include "NBTTagCompound.h"
 #include "NBTTagList.h"
 #include "Packet.h"
+#include "ProtocolTranslator189IO.h"
 #include "ProtocolVersion.h"
 #include "RenderEngine.h"
 #include "ServerNBTStorage.h"
@@ -838,6 +839,43 @@ void GuiMultiplayer::pollServer(const std::shared_ptr<ServerNBTStorage> &server)
     {
         markOffline();
         return;
+    }
+
+    // 1.8.9-pinned rows (or Auto following a 1.8.9 global default) answer
+    // the 1.8 status handshake instead of the 0xFE ping.
+    {
+        int_t version = server->version;
+        if (version == ProtocolVersions::kAutoVersion)
+        {
+            Minecraft *mc = Minecraft::getMinecraft();
+            version = (mc != nullptr && mc->gameSettings != nullptr)
+                          ? mc->gameSettings->serverVersion
+                          : ProtocolVersions::kNativeVersion;
+        }
+        version = ProtocolVersions::resolveSupported(version);
+        if (version == translator189::kTargetProtocol)
+        {
+            std::string motd;
+            int online = 0;
+            int maximum = 0;
+            long long lagMs = 0;
+            socket->close();
+            if (!Translator189Connection::pollStatus(host, (int)port, motd, online, maximum, lagMs))
+            {
+                markOffline();
+                return;
+            }
+            const std::string resolvedMotd = "\xC2\xA7" "7" + motd;
+            const std::string resolvedCount = online >= 0 && maximum > 0
+                ? "\xC2\xA7" "7" + std::to_string(online) + "\xC2\xA7" "8/" "\xC2\xA7" "7" + std::to_string(maximum)
+                : "\xC2\xA7" "8???";
+            {
+                std::lock_guard<std::mutex> guard(server->stateMutex);
+                server->motd = resolvedMotd;
+                server->playerCount = resolvedCount;
+            }
+            return;
+        }
     }
 
     std::unique_ptr<std::istream> input = JavaNetwork::createInputStream(*socket);

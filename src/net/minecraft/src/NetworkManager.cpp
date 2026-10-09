@@ -19,6 +19,7 @@
 
 #include "NetHandler.h"
 #include "Packet.h"
+#include "ProtocolTranslator189IO.h"
 #include "java/JavaNetwork.h"
 #include "java/Arithmetic.h"
 #include "java/System.h"
@@ -88,6 +89,9 @@ NetworkManager::NetworkManager(const std::string &host, int_t port, const std::s
 	, sendQueueByteLength(0)
 	, readQueueByteLength(0)
 	, field_20100_w(50)
+	, translationTarget(29)
+	, translationHost(host)
+	, translationPort(port)
 {
 	if (networkSocket == nullptr || !networkSocket->connect(host, port))
 		throw std::runtime_error("Connection refused: " + host + ":" + std::to_string(port));
@@ -181,6 +185,29 @@ void NetworkManager::addToSendQueue(Packet *packet)
 	wakeThreads();
 }
 
+void NetworkManager::setTranslationTarget(int_t protocolVersion, const std::string &host, int_t port)
+{
+	translationTarget = protocolVersion;
+	translationHost = host;
+	translationPort = port;
+	if (protocolVersion == translator189::kTargetProtocol)
+		translator = std::make_unique<Translator189Connection>(host, static_cast<int>(port));
+	else
+		translator.reset();
+}
+
+void NetworkManager::writePacketOut(Packet *packet, std::ostream &os)
+{
+	if (translator != nullptr)
+	{
+		// 1.8.9 mode: drops (login swallowed, quit, unmapped) write
+		// nothing and are not errors; the socket close follows those.
+		translator->writeTranslated(packet, os);
+		return;
+	}
+	Packet::writePacket(packet, os);
+}
+
 bool NetworkManager::sendPacket()
 {
 	bool flag = false;
@@ -201,7 +228,7 @@ bool NetworkManager::sendPacket()
 		}
 		if (packet != nullptr)
 		{
-			Packet::writePacket(packet.get(), *socketOutputStream);
+			writePacketOut(packet.get(), *socketOutputStream);
 			if (!socketOutputStream->good())
 				throw std::runtime_error("Failed to write network packet");
 			field_28144_e[packet->getPacketId()] += packet->getPacketSize() + 1;
@@ -220,7 +247,7 @@ bool NetworkManager::sendPacket()
 		}
 		if (packet1 != nullptr)
 		{
-			Packet::writePacket(packet1.get(), *socketOutputStream);
+			writePacketOut(packet1.get(), *socketOutputStream);
 			if (!socketOutputStream->good())
 				throw std::runtime_error("Failed to write chunk packet");
 			field_28144_e[packet1->getPacketId()] += packet1->getPacketSize() + 1;
@@ -267,7 +294,11 @@ bool NetworkManager::readPacket()
 		if (socketInputStream == nullptr)
 			return false;
 
-		std::unique_ptr<Packet> packet = Packet::readPacket(*socketInputStream, serverHandler);
+		std::unique_ptr<Packet> packet;
+		if (translator != nullptr)
+			packet = translator->readOneTranslated(*socketInputStream);
+		else
+			packet = Packet::readPacket(*socketInputStream, serverHandler);
 		if (packet != nullptr)
 		{
 			const int_t packetBytesSigned = packet->getPacketSize() + 1;

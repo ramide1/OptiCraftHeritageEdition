@@ -36,15 +36,16 @@ namespace ProtocolVersions
 	constexpr int_t kNativeVersion = 29;
 
 	// Ordered oldest-first; the Add/Edit Server selector cycles this list.
-	inline const std::array<ProtocolVersionInfo, 6> &all()
+	inline const std::array<ProtocolVersionInfo, 7> &all()
 	{
-		static constexpr std::array<ProtocolVersionInfo, 6> kVersions = {{
+		static constexpr std::array<ProtocolVersionInfo, 7> kVersions = {{
 			{14, "Beta 1.7.3", false},  // first planned translation target
 			{17, "Beta 1.8.1", false},
 			{22, "1.0.0", false},
 			{23, "1.1", false},
 			{28, "1.2.3", false},
 			{29, "1.2.5", true},        // native engine protocol
+			{47, "1.8.9", true},        // ProtocolTranslator189 adapter
 		}};
 		return kVersions;
 	}

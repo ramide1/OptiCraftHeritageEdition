@@ -23,6 +23,7 @@ class Socket;
 
 class NetHandler;
 class Packet;
+class Translator189Connection;
 
 // net.minecraft.src.NetworkManager
 class NetworkManager
@@ -33,6 +34,12 @@ public:
 
 	void addToSendQueue(Packet *packet);
 	void processReadPackets();
+	// Enables the 1.8.9 translation adapter for this connection (protocol
+	// 47: the 1.2.5 engine speaks 1.8.9 on the wire through
+	// Translator189Connection). Any other id keeps the native framing.
+	// Called by NetClientHandler right after construction, before either
+	// network thread can use the streams.
+	void setTranslationTarget(int_t protocolVersion, const std::string &host, int_t port);
 	void wakeThreads();
 	void networkShutdown(const std::string &s, const std::vector<std::string> &aobj);
 	void serverShutdown() { closeConnection(); }
@@ -68,6 +75,7 @@ public:
 
 private:
 	bool readPacket();
+	void writePacketOut(Packet *packet, std::ostream &os);
 #if defined(CTR_PLATFORM)
 	// Reader/writer-side "wedge" service for queued map chunks. Packet51s
 	// decoded while the live-inflated cap (Packet51MapChunk.cpp) was full
@@ -175,4 +183,10 @@ private:
 	std::size_t readQueueByteLength;
 	std::atomic<unsigned int> receivedEntityPackets{0};
 	int_t field_20100_w;
+	// 1.8.9 translation adapter (null = native 1.2.5 framing). Created by
+	// setTranslationTarget; readPacket/writePacket branch through it.
+	int_t translationTarget = 29;
+	std::string translationHost;
+	int_t translationPort = 25565;
+	std::unique_ptr<Translator189Connection> translator;
 };

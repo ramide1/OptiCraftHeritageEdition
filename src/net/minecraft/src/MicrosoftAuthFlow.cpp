@@ -8,6 +8,7 @@
 #include "platform/PlatformAuth.h"
 
 #include <chrono>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>

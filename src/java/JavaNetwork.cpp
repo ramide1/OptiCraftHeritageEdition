@@ -155,7 +155,7 @@ int rawRecv(NativeHandle handle, char *data, int length)
 
 // select() for writability (write=true) or readability. A null timeout
 // waits indefinitely, mirroring the old blocking-socket shape.
-int waitSocket(NativeHandle handle, bool write, const struct timeval *timeout)
+int waitSocket(NativeHandle handle, bool write, struct timeval *timeout)
 {
     fd_set set;
     FD_ZERO(&set);

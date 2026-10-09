@@ -657,7 +657,7 @@ jobs:
           sudo apt update
           sudo apt install -y ninja-build ccache \
             libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
-            libxinerama-dev libasound2-dev
+            libxinerama-dev libxss-dev libxtst-dev libasound2-dev
 
       - name: Cache ccache
         uses: actions/cache@v6
@@ -748,7 +748,7 @@ jobs:
           sudo apt update
           sudo apt install -y ninja-build ccache \
             libgl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
-            libxinerama-dev libasound2-dev
+            libxinerama-dev libxss-dev libxtst-dev libasound2-dev
 
       - name: Cache ccache
         uses: actions/cache@v6
@@ -801,9 +801,7 @@ jobs:
   # nothing 64-bit sneaks into a 32-bit link; OpenGL is forced to the legacy
   # (non-GLVND) path so OpenGL::GL resolves to the i386 libGL.so.1 from
   # libgl1:i386 instead of the amd64 libOpenGL/libGLX GLVND libraries.
-  # GLFW gets the same treatment (GLFW_BUILD_X11/WAYLAND=OFF): there are no
-  # i386 X11 dev packages here, and unlike SDL it has no fallback window
-  # backend, so this artifact is as headless as the SDL_X11=OFF ones were.
+  # 32-bit desktop build with X11 video (multiarch i386 packages).
   build-linux-x86-gcc:
     timeout-minutes: 45
     name: Linux x86 GCC
@@ -815,12 +813,15 @@ jobs:
           fetch-depth: 1
           submodules: recursive
 
-      - name: Install build tools (multilib + i386 GL runtime)
+      - name: Install build tools (multilib + i386 X11/GL)
         run: |
           sudo dpkg --add-architecture i386
           sudo apt update
           sudo apt install -y gcc-multilib g++-multilib ninja-build ccache \
-            libgl-dev libgl1:i386
+            libgl-dev libgl1:i386 \
+            libx11-dev:i386 libxext-dev:i386 libxrandr-dev:i386 \
+            libxcursor-dev:i386 libxi-dev:i386 libxinerama-dev:i386 \
+            libxss-dev:i386 libxtst-dev:i386 libasound2-dev:i386
 
       - name: Cache ccache
         uses: actions/cache@v6
@@ -848,15 +849,7 @@ jobs:
           -DCMAKE_MODULE_LINKER_FLAGS=-m32
           -DOpenGL_GL_PREFERENCE=LEGACY
           -DOPENGL_gl_LIBRARY=/usr/lib/i386-linux-gnu/libGL.so.1
-          -DSDL_X11=OFF
-          -DSDL_WAYLAND=OFF
-          -DSDL_ALSA=OFF
-          -DSDL_PULSEAUDIO=OFF
-          -DSDL_UDEV=OFF
-          -DSDL_JACK=OFF
-          -DSDL_PIPEWIRE=OFF
-          -DSDL_SNDIO=OFF
-          -DGLFW_BUILD_X11=OFF
+          -DSDL_VIDEO_DRIVER_WAYLAND=OFF
           -DGLFW_BUILD_WAYLAND=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
@@ -880,23 +873,12 @@ jobs:
         if: always()
         run: ccache --show-stats
 
-  # ── Linux ARMv7 (armhf) GCC, cross-compiled ─────────────────────────
-  # Mirrors the Linux x86 job: cross arm-linux-gnueabihf toolchain, SDL
-  # video/audio backends that would pick up the host's amd64 dev libraries
-  # are disabled explicitly (and GLFW is left headless the same way — no
-  # armhf X11 dev packages), and OpenGL is pinned to the armhf runtime
-  # (linking against it is harmless to begin with -- glad resolves GL via
-  # dlopen, so no libGL symbols are referenced at link time). armhf packages
-  # still live on ports.ubuntu.com (only arm64 joined archive.ubuntu.com in
-  # 26.04), so an armhf ports source is added and the stock sources are
-  # restricted to the host arches; otherwise apt update 404s asking
-  # archive.ubuntu.com for armhf indices. The ports source also lists the
-  # -updates and -security pockets: libc6 must be the exact same version on
-  # every architecture (libc6:armhf Breaks libc6 (!= same version)), and the
-  # runner's amd64 libc6 tracks -security while the base pocket stays frozen
-  # at the release version. Subscribing only to the base suite leaves armhf
-  # libc6 behind, so every multiarch transaction (cross toolchain, libgl1:armhf)
-  # dies with "two conflicting assignments".
+  # 32-bit ARM desktop build with X11 video + audio (cross armhf packages).
+  # Mirrors the Linux x86 job: cross arm-linux-gnueabihf toolchain with X11
+  # and audio backends enabled via armhf multiarch packages from ports.ubuntu.com.
+  # The ports source includes -updates and -security to keep libc6:armhf in
+  # sync with the runner's amd64 libc6 (libc6:armhf Breaks libc6 if versions
+  # differ). GLFW builds X11-only (Wayland off -- no armhf wayland-scanner).
   build-linux-armv7-gcc:
     timeout-minutes: 45
     name: Linux ARMv7 GCC
@@ -918,10 +900,6 @@ jobs:
             sudo mv /tmp/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources
           fi
           codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
-          # NB: ubuntu-keyring ships the archive keyring as
-          # ubuntu-archive-keyring.gpg; a ".pgp" path does not exist on any
-          # release, and apt rejects the repo with NO_PUBKEY when Signed-By
-          # points at a missing keyring.
           printf '%s\n' \
             'Types: deb' \
             'URIs: http://ports.ubuntu.com/ubuntu-ports' \
@@ -932,7 +910,11 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/armhf-ports.sources
           sudo apt update
           sudo apt install -y --allow-downgrades crossbuild-essential-armhf ninja-build ccache \
-            libgl-dev libgl1:armhf
+            libgl-dev libgl1:armhf \
+            libx11-dev:armhf libxext-dev:armhf libxrandr-dev:armhf \
+            libxcursor-dev:armhf libxi-dev:armhf libxinerama-dev:armhf \
+            libxss-dev:armhf libxtst-dev:armhf \
+            libasound2-dev:armhf libpulse-dev:armhf
 
       - name: Cache ccache
         uses: actions/cache@v6
@@ -958,15 +940,7 @@ jobs:
           "-DCMAKE_CXX_FLAGS=-I$GITHUB_WORKSPACE/src/net/minecraft/src"
           -DOpenGL_GL_PREFERENCE=LEGACY
           -DOPENGL_gl_LIBRARY=/usr/lib/arm-linux-gnueabihf/libGL.so.1
-          -DSDL_X11=OFF
-          -DSDL_WAYLAND=OFF
-          -DSDL_ALSA=OFF
-          -DSDL_PULSEAUDIO=OFF
-          -DSDL_UDEV=OFF
-          -DSDL_JACK=OFF
-          -DSDL_PIPEWIRE=OFF
-          -DSDL_SNDIO=OFF
-          -DGLFW_BUILD_X11=OFF
+          -DSDL_VIDEO_DRIVER_WAYLAND=OFF
           -DGLFW_BUILD_WAYLAND=OFF
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache

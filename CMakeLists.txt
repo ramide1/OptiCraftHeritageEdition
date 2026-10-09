@@ -120,6 +120,12 @@ opticraft_add_optional_test(WorldClientEntityIdentityTests
     tests/WorldClientEntityIdentityTests.cpp
 )
 
+opticraft_add_optional_test(ProtocolTranslator189Tests
+    tests/ProtocolTranslator189Tests.cpp
+    src/net/minecraft/src/ProtocolTranslator189.cpp
+    src/net/minecraft/src/AuthJson.cpp
+)
+
 opticraft_add_optional_test(JavaHashSetTests
     tests/JavaHashSetTests.cpp
     src/net/minecraft/src/ChunkCoordIntPair.cpp

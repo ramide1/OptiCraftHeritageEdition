@@ -158,6 +158,9 @@ NetClientHandler::NetClientHandler(Minecraft* minecraft, const std::string& host
     try
     {
         netManager = new NetworkManager(host, port, "Client", this);
+        // Per-server wire version: 1.8.9 targets speak 1.8.9 through the
+        // translation adapter, everything else keeps native framing.
+        netManager->setTranslationTarget(protocolVersion, host, port);
     }
     catch (...)
     {
