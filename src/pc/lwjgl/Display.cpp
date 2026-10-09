@@ -142,6 +142,11 @@ bool isActive()
 	return glfwGetWindowAttrib(GLContext::detail::getWindow(), GLFW_FOCUSED) != 0;
 }
 
+bool isMinimized()
+{
+	return glfwGetWindowAttrib(GLContext::detail::getWindow(), GLFW_ICONIFIED) != 0;
+}
+
 void processMessages()
 {
 	// The event dispatch itself is callback-driven (see pc/lwjgl/GlfwEvents.cpp);

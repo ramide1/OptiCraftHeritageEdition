@@ -182,6 +182,9 @@ FontRenderer::~FontRenderer()
 		fontDisplayLists = 0;
 	}
 #endif
+#if !PLATFORM_FONT_IMMEDIATE
+	clearStringCache();
+#endif
 }
 
 int_t FontRenderer::drawStringWithShadow(const std::string &s, int_t i, int_t j, int_t k)
@@ -304,6 +307,40 @@ int_t FontRenderer::renderString(const std::string &s, int_t i, int_t j, int_t k
 {
 	return JavaArithmetic::floatToInt(renderStringScaled(s, (float_t)i, (float_t)j, k, flag, 1.0f));
 }
+
+#if !PLATFORM_FONT_IMMEDIATE
+namespace
+{
+constexpr std::size_t kStringCacheMaxEntries = 256;
+}
+
+bool FontRenderer::hasVolatileFormatCode(const std::vector<char_t> &units)
+{
+	// Obfuscated (section-k) re-randomizes its glyph every frame and
+	// strikethrough / underline (section-m/n) queue screen-space
+	// decorations outside the captured list -- none of the three survives
+	// a display-list replay, so such strings take the direct path.
+	for (std::size_t i = 0; i + 1 < units.size(); ++i)
+	{
+		if (units[i] != 0x00a7u)
+			continue;
+		const char_t codeUnit = units[i + 1];
+		const char code = codeUnit <= 0x7fu
+			? static_cast<char>(std::tolower(static_cast<unsigned char>(codeUnit)))
+			: '\0';
+		if (code == 'k' || code == 'm' || code == 'n')
+			return true;
+	}
+	return false;
+}
+
+void FontRenderer::clearStringCache()
+{
+	for (auto &entry : stringCache)
+		GLAllocation::deleteDisplayLists(entry.second.displayList);
+	stringCache.clear();
+}
+#endif
 
 float_t FontRenderer::renderStringScaled(const std::string &s, float_t x, float_t y, int_t k, bool flag, float_t scale)
 {
@@ -477,6 +514,37 @@ float_t FontRenderer::renderStringScaled(const std::string &s, float_t x, float_
 	renderTranslate(x, y, 0.0f);
 	renderScale(scale, scale, scale);
 
+	// ImmediatelyFast-style string cache: a repeated (text, color, shadow)
+	// replays one compiled display list instead of walking every glyph.
+	// The list captures glyph calls, translates and the section-r color
+	// restore, so the base color and the shadow flag belong to the key;
+	// position and scale are applied by the caller's transform above and
+	// stay outside it, keeping every entry reusable at any origin.
+	const bool cacheEligible = !hasVolatileFormatCode(units);
+	if (cacheEligible)
+	{
+		if (stringCacheRevision != textCacheRevision)
+		{
+			// Font texture reloaded: every compiled list holds stale glyph
+			// geometry. Drop the whole table; entries recompile on demand.
+			clearStringCache();
+			stringCacheRevision = textCacheRevision;
+		}
+		const auto cacheKey = std::make_tuple(s, k, flag);
+		const auto cached = stringCache.find(cacheKey);
+		if (cached != stringCache.end())
+		{
+			int_t cachedList = cached->second.displayList;
+			renderCallDisplayLists(1, &cachedList);
+			renderPopMatrix();
+			return x + cached->second.width * scale;
+		}
+	}
+
+	const int_t compileList = cacheEligible ? GLAllocation::generateDisplayLists(1) : 0;
+	if (cacheEligible)
+		renderBeginDisplayList(compileList);
+
 	float_t cursor = 0.0f;
 	for (std::size_t i = 0; i < units.size(); ++i)
 	{
@@ -581,6 +649,24 @@ float_t FontRenderer::renderStringScaled(const std::string &s, float_t x, float_
 			addDecoration(x + (cursor - 1.0f) * scale, y + 8.0f * scale,
 				x + (cursor + advance) * scale, y + 9.0f * scale);
 		cursor += advance;
+	}
+
+	if (cacheEligible)
+	{
+		renderEndDisplayList();
+		if (stringCache.size() >= kStringCacheMaxEntries)
+		{
+			// Rotating chat would otherwise grow the table forever. A full
+			// flush is O(entries) deletes amortized over 256 recompiles --
+			// cheaper to reason about than an LRU, and cold strings are
+			// exactly the ones a flush should evict anyway.
+			clearStringCache();
+		}
+		stringCache.emplace(std::make_tuple(s, k, flag),
+			StringCacheEntry{compileList, cursor});
+		// First use replays the just-compiled list, so the cached and direct
+		// paths render identically from the very first frame.
+		renderCallDisplayLists(1, &compileList);
 	}
 
 	renderPopMatrix();

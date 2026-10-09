@@ -124,7 +124,7 @@ git clone --recurse-submodules <repo-url>
 
 The pins: `GLFW` at `3.5.1`, `openal-soft` at `1.25.2`, `SDL3` at `release-3.4.18`, `zlib` at `v1.3.1`, `mbedtls` at `v3.6.7` (which itself carries a nested `framework` submodule — the recursive flag covers it), plus `stb` and `quirc` at their current upstream tips. The one non-submodule is `external/glad`: it is generated loader output with no upstream repository, so it stays vendored.
 
-Game code uses bare includes such as `#include "Minecraft.h"`, resolved against `src/net/minecraft/src`. Console toolchain files add that include path themselves; on desktop, add `-DCMAKE_CXX_FLAGS=-I<prefix>/src/net/minecraft/src` to the configure if you hit missing-header errors.
+Game code uses bare includes such as `#include "Minecraft.h"`, resolved against `src/net/minecraft/src`. Console toolchain files add that include path themselves.
 
 ## Microsoft account login
 
@@ -160,7 +160,6 @@ The `gcc-*` presets are MinGW/Windows-specific. On Linux and macOS use a plain C
 cmake -B build/release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DMC_LOG_LEVEL=2 \
-  "-DCMAKE_CXX_FLAGS=-I$PWD/src/net/minecraft/src"
 cmake --build build/release
 ```
 
@@ -213,6 +212,8 @@ Use `3ds-debug` for a debug build and `3ds-bringup` for the minimal toolchain br
 ## Development notes
 
 OptiCraft Heritage contains substantial platform-specific changes compared with the behavior it reproduces. Examples include custom render backends, legacy UI work, low-memory chunk policies, console input layers, asset streaming, platform storage, audio backends, profiling, and console-specific performance tuning.
+
+Some of that tuning is a clean-room port of techniques popularized by the community optimization-mod ecosystem (implemented from the observable technique, never from mod code): budgeted ray-cast occlusion culling for the entity and tile-entity render passes in the style of EntityCulling/moreculling (`src/platform/world/EntityOcclusionCache.*`), an unfocused-window render throttle with minimized-window audio muting in the style of Dynamic-FPS (`PLATFORM_UNFOCUSED_RENDER_FRAME_INTERVAL`, `PLATFORM_MUTE_AUDIO_WHEN_MINIMIZED`), fancy-leaves interior-face culling in the style of moreculling/Sodium (`PLATFORM_FANCY_LEAVES_FACE_CULLING`), and a display-list string cache for the desktop text path in the style of ImmediatelyFast (`FontRenderer`). Each is a per-platform tuning knob, so desktop can keep exact vanilla behavior where fidelity matters while the consoles take the performance trade.
 
 When changing shared systems, keep the platform abstraction boundary intact and avoid introducing PC-only assumptions into common code. Likewise, console-specific optimizations should remain behind platform policies or dedicated backends whenever possible.
 

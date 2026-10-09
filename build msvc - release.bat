@@ -2,9 +2,6 @@
 REM Windows x64 MSVC build. Mirrors the build-windows-x64-msvc CI job:
 REM   cmake -B build/msvc-release -G "Visual Studio 18 2026" -A x64 -DMC_LOG_LEVEL=2
 REM   cmake --build build/msvc-release --config Release --parallel
-REM with CXXFLAGS carrying the bare-include path (src/net/minecraft/src),
-REM exactly like CI (CXXFLAGS env, so cl keeps its default /DWIN32 /W3 /EHsc
-REM instead of replacing them the way -DCMAKE_CXX_FLAGS would).
 REM
 REM This script deliberately calls a NATIVE WINDOWS cmake by full path instead of
 REM whatever `cmake` resolves to. devkitPro's installer puts its MSYS2 bin

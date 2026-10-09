@@ -90,6 +90,10 @@ bool isCloseRequested();
 bool isVisible();
 bool isActive();
 
+// True while the window is iconified (taskbar-docked). Desktop-only state:
+// the console backends report false forever, like isActive().
+bool isMinimized();
+
 void processMessages();
 
 void swapBuffers();

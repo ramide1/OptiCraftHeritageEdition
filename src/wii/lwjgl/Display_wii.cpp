@@ -76,6 +76,7 @@ void setFullscreen(bool)       {}
 bool isCloseRequested() { return WiiSystemEvents::exitRequested(); }
 bool isVisible()        { return true; }
 bool isActive()         { return true; }
+bool isMinimized()      { return false; }
 
 void processMessages()
 {

@@ -72,7 +72,7 @@ REM injects it via CMAKE_CXX_FLAGS, so this wrapper does the same -- without
 REM it the game sources fail with "No such file or directory". The preset's
 REM own -m32 -msse2 -mfpmath=sse must be repeated here: a command-line -D
 REM replaces the preset value instead of appending to it.
-"!CMAKE_EXE!" --preset gcc32-legacy-release -DCMAKE_MAKE_PROGRAM="!NINJA_EXE!" "-DCMAKE_CXX_FLAGS=-m32 -msse2 -mfpmath=sse -I%CD:\=/%/src/net/minecraft/src"
+"!CMAKE_EXE!" --preset gcc32-legacy-release -DCMAKE_MAKE_PROGRAM="!NINJA_EXE!" "-DCMAKE_CXX_FLAGS=-m32 -msse2 -mfpmath=sse"
 if errorlevel 1 goto :fail
 
 "!CMAKE_EXE!" --build --preset gcc32-legacy-release --parallel

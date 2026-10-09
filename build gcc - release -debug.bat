@@ -78,7 +78,7 @@ REM Bare includes (Minecraft.h et al) live in src/net/minecraft/src. The
 REM console toolchains add that path themselves; on desktop every CI job
 REM injects it via CMAKE_CXX_FLAGS, so this wrapper does the same -- without
 REM it the game sources fail with "No such file or directory".
-"!CMAKE_EXE!" --preset gcc-release -DMC_LOG_LEVEL=2 -DCMAKE_MAKE_PROGRAM="!NINJA_EXE!" "-DCMAKE_CXX_FLAGS=-I%CD:\=/%/src/net/minecraft/src"
+"!CMAKE_EXE!" --preset gcc-release -DMC_LOG_LEVEL=2 -DCMAKE_MAKE_PROGRAM="!NINJA_EXE!"
 if errorlevel 1 goto :fail
 
 "!CMAKE_EXE!" --build --preset gcc-release --parallel 

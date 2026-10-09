@@ -59,6 +59,8 @@ void SoundManager::tryToSetLibraryAndCodecs() {}
 #include "net/minecraft/src/SoundPoolEntry.h"
 #include "platform/audio/AudioAssetFormat.h"
 #include "platform/audio/AudioSpatialization.h"
+#include "platform/PlatformTuning.h"
+#include "lwjgl/Display.h"
 
 // ─── Internal audio mixer ────────────────────────────────────────────────────
 //
@@ -639,6 +641,16 @@ void SoundManager::playRandomMusicIfReady()
 void SoundManager::setListenerPosition(EntityLiving *entityliving, float f)
 {
     if (!loaded || !options || options->soundVolume == 0.0f) return;
+#if PLATFORM_MUTE_AUDIO_WHEN_MINIMIZED
+    // Dynamic-FPS-style mute: a taskbar-docked window is not being watched
+    // or listened to. The listener gain is the OpenAL master multiplier, so
+    // one call silences every bus (sound, music, streaming) without
+    // touching channel state -- sources keep playing muted and everything
+    // is audible again the first frame after the window is restored. Set
+    // every frame on purpose: no cached flag to desynchronize if the
+    // context is ever recreated while minimized.
+    alListenerf(AL_GAIN, lwjgl::Display::isMinimized() ? 0.0f : 1.0f);
+#endif
     updateAudioListener(s_listener, entityliving, f);
 }
 
