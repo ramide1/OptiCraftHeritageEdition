@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GuiScreen.h"
+#include "ProtocolVersion.h"
 #include <string>
 
 class Minecraft;
@@ -11,7 +12,8 @@ class ThreadConnectToServer;
 class GuiConnecting : public GuiScreen
 {
 public:
-	GuiConnecting(Minecraft *minecraft, const std::string &host, int_t port);
+	GuiConnecting(Minecraft *minecraft, const std::string &host, int_t port,
+	              int_t protocolVersion = ProtocolVersions::kNativeVersion);
 	~GuiConnecting() override;
 
 	void updateScreen() override;

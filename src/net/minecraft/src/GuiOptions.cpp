@@ -48,6 +48,12 @@ void GuiOptions::initGui()
 				optionButton->enabled = false;
 				optionButton->displayString = tr->translateKey("options.difficulty") + ": " + tr->translateKey("options.difficulty.hardcore");
 			}
+			else if (opt == EnumOptions::DIFFICULTY)
+			{
+				// Allow changing difficulty including peaceful mode
+				optionButton->displayString = tr->translateKey("options.difficulty") + ": " +
+					tr->translateKey(GameSettings::DIFFICULTIES[options->difficulty]);
+			}
 			controlList.push_back(optionButton);
 		}
 		else

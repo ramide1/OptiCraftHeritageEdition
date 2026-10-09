@@ -108,9 +108,13 @@ else()
     # unreachable and must not enter the target.
     mcbeta_exclude_remote_stats_sources(WII_SOURCES)
 
-    # The Wii audio backend uses stb_vorbis without pulling the desktop SDL
-    # backend into the target.
-    list(APPEND WII_SOURCES "${CMAKE_SOURCE_DIR}/src/pc/external/stb_vorbis.cpp")
+    # The Wii audio backend consumes the PS2's ADP assets (SPU2-ADPCM, adpenc
+    # output -- see src/platform/audio/SoundManager_WII.cpp), decoded with the
+    # portable software decoder in src/platform/audio/Ps2AdpcmStreamDecoder.*.
+    # That file is part of the common platform sources every target compiles,
+    # so nothing is listed here explicitly; in particular stb_vorbis and the
+    # desktop OGG tree stay out of this target entirely now that the backend
+    # no longer decodes Vorbis.
 
     # JavaNetwork.cpp is the SDL_net desktop backend. The Wii implementation
     # lives entirely in src/wii when networking is enabled.

@@ -10,10 +10,6 @@
 #include "platform/PlatformConfig.h"
 #include "platform/PlatformTuning.h"
 
-#if !PLATFORM_PS2
-struct SDL_Window;
-#endif
-
 class File;
 
 class PlayerController;
@@ -214,9 +210,6 @@ public:
     float playerCursorY[2];
     bool playerCursorInitialized[2];
     int ignorePauseMenuTicks;
-#if !PLATFORM_PS2
-    SDL_Window *window;
-#endif
 
 private:
     friend void LegacyStartup::run(Minecraft* minecraft);

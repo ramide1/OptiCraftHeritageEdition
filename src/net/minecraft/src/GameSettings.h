@@ -68,13 +68,12 @@ private:
 	void syncKeyBindingsToPlatform();
 	int_t legacyGuiScaleRestore;
 
+	public:
 	static const char *RENDER_DISTANCES[4];
 	static const char *DIFFICULTIES[4];
 	static const char *GUISCALES[4];
 	static const char *PARTICLES[3];
 	static const char *LIMIT_FRAMERATES[3];
-
-public:
 	float musicVolume;
 	float soundVolume;
 	float mouseSensitivity;
@@ -116,6 +115,12 @@ public:
 	// Offline/LAN multiplayer identity. Kept in options.txt so console builds do
 	// not need command-line arguments to choose a player name.
 	std::string playerName;
+	// Global default of the multiplayer server-version selection: the wire
+	// protocol sent in the login packet when a server entry carries no
+	// per-server override (ServerNBTStorage::version). Kept in options.txt so
+	// the choice survives round-trips; unsupported stored ids clamp to the
+	// native protocol (ProtocolVersions::resolveSupported).
+	int_t serverVersion;
 	std::string selectedSkin;
 	std::string selectedSkinP2;
 	bool legacyUI;

@@ -822,6 +822,20 @@ void RenderGlobal::renderEntities(Vec3D *vec3d, ICamera *icamera, float f)
 			continue;
 		}
 
+		// Frustum-cull tile entities before the distance/light/render setup
+		// below: the per-frame TER path is pure overhead for an off-screen
+		// chest or sign. The test box is padded a block each way so parts
+		// that stick out of the base block (piston arms, open lids) can
+		// never be clipped by a tight test.
+		AxisAlignedBB *tileBox = AxisAlignedBB::getBoundingBoxFromPool(
+			(double)tileEntity->xCoord - 1.0, (double)tileEntity->yCoord - 1.0, (double)tileEntity->zCoord - 1.0,
+			(double)tileEntity->xCoord + 2.0, (double)tileEntity->yCoord + 2.0, (double)tileEntity->zCoord + 2.0);
+		if (tileBox != nullptr && !icamera->isBoundingBoxInFrustum(tileBox))
+		{
+			++k;
+			continue;
+		}
+
 		TileEntityRenderer::instance.renderTileEntity(tileEntity, f);
 		++k;
 	}

@@ -40,7 +40,7 @@ void MouseHelper::mouseXYChange()
 	int_t rawX = lwjgl::Mouse::getDX();
 	int_t rawY = lwjgl::Mouse::getDY();
 
-	// When the mouse is grabbed SDL/LWJGL can report old warp/menu deltas for
+	// When the mouse is grabbed GLFW/LWJGL can report old warp/menu deltas for
 	// a few frames.  If those are fed into Entity::turnEntity the camera appears
 	// to spin by itself.  Drain them after focus changes.
 	if (field_1115_e > 0)

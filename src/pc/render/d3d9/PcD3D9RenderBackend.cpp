@@ -6,8 +6,6 @@
 #include <cmath>
 #include <cstring>
 
-#include <SDL.h>
-
 #include "pc/render/d3d9/PcD3D9Context.h"
 #include "pc/render/d3d9/PcD3D9Internal.h"
 #include "platform/Log.h"
@@ -449,7 +447,7 @@ void renderFinishGpu()
     {
         query->Issue(D3DISSUE_END);
         while (query->GetData(nullptr, 0, D3DGETDATA_FLUSH) == S_FALSE)
-            SDL_Delay(0);
+            Sleep(0); // yield the thread to the driver while the GPU catches up
         query->Release();
     }
 }

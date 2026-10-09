@@ -8,7 +8,9 @@ class UnexpectedThrowable;
 // Standalone (non-applet) Minecraft instance.
 // Java: extends Minecraft, holds a reference to the AWT Frame so that
 // the crash report panel can be injected when a fatal error occurs.
-// C++: holds an SDL_Window* (as void*) to represent the game window.
+// C++: keeps the constructor shape (component/canvas/applet/frame are
+// vestigial) and represents the game window through the lwjgl GLContext
+// singleton instead of an OS handle.
 class MinecraftImpl : public Minecraft
 {
 public:

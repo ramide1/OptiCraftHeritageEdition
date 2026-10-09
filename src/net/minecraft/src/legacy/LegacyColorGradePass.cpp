@@ -11,7 +11,7 @@
 #if PLATFORM_PC
 #include "pc/render/PcRenderBackend.h"
 #include <glad/glad.h>
-#include <SDL.h>
+#include <GLFW/glfw3.h>
 #include <cstdio>
 #endif
 
@@ -81,7 +81,7 @@ struct LegacyShaderApi
 
     bool load()
     {
-#define LOAD_LEGACY_GL(member, type, name) member = reinterpret_cast<type>(SDL_GL_GetProcAddress(name))
+#define LOAD_LEGACY_GL(member, type, name) member = reinterpret_cast<type>(glfwGetProcAddress(name))
         LOAD_LEGACY_GL(createShader, LegacyCreateShaderProc, "glCreateShader");
         LOAD_LEGACY_GL(shaderSource, LegacyShaderSourceProc, "glShaderSource");
         LOAD_LEGACY_GL(compileShader, LegacyCompileShaderProc, "glCompileShader");

@@ -1,12 +1,14 @@
 #include "pc/audio/PcMusicStream.h"
 
-#include "pc/external/stb_vorbis.h"
+#include "platform/audio/Ps2AdpcmStreamDecoder.h"
+#include "platform/audio/AdpAssetDecode.h"
+#include "platform/audio/AudioConvert.h"
 #include "platform/audio/AudioAssetFormat.h"
-#include "platform/audio/VorbisAssetOpen.h"
 #include "platform/storage/AssetPak.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -14,10 +16,20 @@
 #include <mutex>
 #include <thread>
 
+// Streamed music/records for the desktop OpenAL mixer. Shapes follow the
+// PS2/3DS asset tree (2026-10 unification, see SoundManager_PC.cpp):
+//
+//   * .pcm  headerless s16le mono 22050 (scripts/ogg to pcm): read and
+//     frame-doubled to the 44100 mixer rate -- no decoder at all.
+//   * .adp  SPU2-ADPCM (scripts/ogg to adp; the all-adp pack shape), decoded
+//     incrementally through the shared portable decoder, so a minutes-long
+//     track never has to sit decoded in RAM.
+//
+// Both feed the same float-stereo ring the OpenAL pump's mix() drains.
+
 namespace
 {
 constexpr int kOutputSampleRate = 44100;
-constexpr int kDecodeFrames = 4096;
 constexpr std::size_t kRingSamples = static_cast<std::size_t>(kOutputSampleRate) * 2u;
 
 std::array<float, kRingSamples> s_ring{};
@@ -31,137 +43,124 @@ std::thread s_thread;
 std::mutex s_mutex;
 std::condition_variable s_condition;
 
-bool validateOgg(const std::string &path)
+// Pak-aware sequential/seekable reader over either a loose file or an
+// AssetPak entry (the pattern PcMusicStream has always used: a fresh
+// FILE* per thread, positioned inside the archive for pak paths).
+struct AssetReader
 {
-    int error = 0;
-    stb_vorbis *vorbis = platformOpenVorbis(path, &error);
-    if (vorbis == nullptr)
-        return false;
-    const stb_vorbis_info info = stb_vorbis_get_info(vorbis);
-    stb_vorbis_close(vorbis);
-    return info.channels >= 1 && info.channels <= 2 && info.sample_rate == kOutputSampleRate;
-}
+    std::FILE *file = nullptr;
+    std::size_t base = 0;   // asset start inside the archive (0 when loose)
+    std::size_t extent = 0; // asset byte count
 
-bool validatePcm(const std::string &path)
-{
-    if (AssetPak::isPakPath(path))
+    bool open(const std::string &path)
     {
-        std::uint32_t offset = 0, size = 0;
-        return AssetPak::locate(AssetPak::keyOf(path), &offset, &size) && size > 0 && (size & 1) == 0;
-    }
-    std::FILE *f = std::fopen(path.c_str(), "rb");
-    if (!f) return false;
-    std::fseek(f, 0, SEEK_END);
-    long size = std::ftell(f);
-    std::fclose(f);
-    return size > 0 && (size & 1) == 0;
-}
-
-void decoderThread(std::string path)
-{
-    int error = 0;
-    stb_vorbis *vorbis = platformOpenVorbis(path, &error);
-    if (vorbis == nullptr)
-    {
-        std::lock_guard<std::mutex> lock(s_mutex);
-        s_eof = true;
-        s_running = false;
-        return;
-    }
-
-    const stb_vorbis_info info = stb_vorbis_get_info(vorbis);
-    std::array<float, kDecodeFrames * 2> decoded{};
-    std::array<float, kDecodeFrames * 2> stereo{};
-
-    for (;;)
-    {
-        const int sourceChannels = info.channels;
-        const int frames = stb_vorbis_get_samples_float_interleaved(
-            vorbis, sourceChannels, decoded.data(), kDecodeFrames * sourceChannels);
-        if (frames <= 0)
-            break;
-
-        for (int frame = 0; frame < frames; ++frame)
+        if (AssetPak::isPakPath(path))
         {
-            const float left = decoded[static_cast<std::size_t>(frame * sourceChannels)];
-            const float right = sourceChannels > 1
-                ? decoded[static_cast<std::size_t>(frame * sourceChannels + 1)]
-                : left;
-            stereo[static_cast<std::size_t>(frame * 2)] = left;
-            stereo[static_cast<std::size_t>(frame * 2 + 1)] = right;
+            std::uint32_t offset = 0, size = 0;
+            if (!AssetPak::locate(AssetPak::keyOf(path), &offset, &size))
+                return false;
+            file = std::fopen(AssetPak::archivePath().c_str(), "rb");
+            if (file == nullptr)
+                return false;
+            base = offset;
+            extent = size;
+            return seek(0);
         }
-
-        std::size_t source = 0;
-        const std::size_t sampleCount = static_cast<std::size_t>(frames) * 2u;
-        while (source < sampleCount)
-        {
-            std::unique_lock<std::mutex> lock(s_mutex);
-            s_condition.wait(lock, [] { return s_stop || s_count < kRingSamples; });
-            if (s_stop)
-            {
-                stb_vorbis_close(vorbis);
-                s_running = false;
-                return;
-            }
-
-            const std::size_t freeSamples = kRingSamples - s_count;
-            const std::size_t contiguous = std::min(freeSamples, kRingSamples - s_write);
-            const std::size_t copyCount = std::min(contiguous, sampleCount - source);
-            std::copy_n(stereo.data() + source, copyCount, s_ring.data() + s_write);
-            s_write = (s_write + copyCount) % kRingSamples;
-            s_count += copyCount;
-            source += copyCount;
-        }
+        file = std::fopen(path.c_str(), "rb");
+        if (file == nullptr)
+            return false;
+        std::fseek(file, 0, SEEK_END);
+        extent = static_cast<std::size_t>(std::ftell(file));
+        return seek(0);
     }
 
-    stb_vorbis_close(vorbis);
+    // Offset is relative to the asset start (loose file position is `base`,
+    // the archive's entry offset for pak paths).
+    bool seek(std::size_t assetOffset)
+    {
+        return file != nullptr && assetOffset <= extent &&
+               std::fseek(file, static_cast<long>(base + assetOffset), SEEK_SET) == 0;
+    }
+
+    std::size_t read(void *dst, std::size_t bytes)
+    {
+        return file == nullptr ? 0 : std::fread(dst, 1, bytes, file);
+    }
+
+    void close()
+    {
+        if (file != nullptr)
+            std::fclose(file);
+        file = nullptr;
+    }
+
+    ~AssetReader() { close(); }
+};
+
+void markEofAndMaybeStop()
+{
     std::lock_guard<std::mutex> lock(s_mutex);
     s_eof = true;
     if (s_count == 0)
         s_running = false;
 }
 
+bool ringWrite(const float *samples, std::size_t sampleCount)
+{
+    std::size_t source = 0;
+    while (source < sampleCount)
+    {
+        std::unique_lock<std::mutex> lock(s_mutex);
+        s_condition.wait(lock, [] { return s_stop || s_count < kRingSamples; });
+        if (s_stop)
+            return false;
+
+        const std::size_t freeSamples = kRingSamples - s_count;
+        const std::size_t contiguous = std::min(freeSamples, kRingSamples - s_write);
+        const std::size_t copyCount = std::min(contiguous, sampleCount - source);
+        std::copy_n(samples + source, copyCount, s_ring.data() + s_write);
+        s_write = (s_write + copyCount) % kRingSamples;
+        s_count += copyCount;
+        source += copyCount;
+    }
+    return true;
+}
+
+bool validatePcm(const std::string &path)
+{
+    // Headerless s16le mono 22050: size is the only thing to check (an
+    // odd trailing byte is dropped rather than read as a half sample, but a
+    // whole-file odd size still marks a truncated asset -- same gate as
+    // before).
+    AssetReader reader;
+    return reader.open(path) && reader.extent >= 2 && (reader.extent & 1u) == 0u;
+}
+
+bool validateAdp(const std::string &path)
+{
+    AssetReader reader;
+    if (!reader.open(path))
+        return false;
+
+    std::uint8_t headerBytes[Ps2AdpcmStream::kHeaderBytes]{};
+    if (reader.read(headerBytes, sizeof(headerBytes)) != sizeof(headerBytes))
+        return false;
+
+    Ps2AdpcmStream::Header header{};
+    // probe() compares the header's promised block count against the whole
+    // file size; only the 16 header bytes are actually read.
+    return AdpAssetDecode::probe(headerBytes, reader.extent, header);
+}
+
 void decoderPcmThread(std::string path)
 {
-    std::FILE *file = nullptr;
-    std::size_t remainingBytes = 0;
-
-    if (AssetPak::isPakPath(path))
+    AssetReader reader;
+    if (!reader.open(path))
     {
-        std::uint32_t dataOffset = 0;
-        std::uint32_t size = 0;
-        if (!AssetPak::locate(AssetPak::keyOf(path), &dataOffset, &size))
-        {
-            std::lock_guard<std::mutex> lock(s_mutex);
-            s_eof = true;
-            s_running = false;
-            return;
-        }
-        file = std::fopen(AssetPak::archivePath().c_str(), "rb");
-        if (file == nullptr || std::fseek(file, static_cast<long>(dataOffset), SEEK_SET) != 0)
-        {
-            if (file) std::fclose(file);
-            std::lock_guard<std::mutex> lock(s_mutex);
-            s_eof = true;
-            s_running = false;
-            return;
-        }
-        remainingBytes = size;
+        markEofAndMaybeStop();
+        return;
     }
-    else
-    {
-        file = std::fopen(path.c_str(), "rb");
-        if (file == nullptr)
-        {
-            std::lock_guard<std::mutex> lock(s_mutex);
-            s_eof = true;
-            s_running = false;
-            return;
-        }
-        std::fseek(file, 0, SEEK_END);
-        remainingBytes = static_cast<std::size_t>(std::ftell(file));
-        std::fseek(file, 0, SEEK_SET);
-    }
+    std::size_t remainingBytes = reader.extent;
 
     constexpr std::size_t kChunkSamples = 2048;
     std::array<std::int16_t, kChunkSamples> rawSamples{};
@@ -170,53 +169,122 @@ void decoderPcmThread(std::string path)
     while (remainingBytes >= sizeof(std::int16_t))
     {
         const std::size_t toRead = std::min(remainingBytes / sizeof(std::int16_t), kChunkSamples);
-        const std::size_t readCount = std::fread(rawSamples.data(), sizeof(std::int16_t), toRead, file);
+        const std::size_t readCount = reader.read(rawSamples.data(), toRead * sizeof(std::int16_t))
+                                      / sizeof(std::int16_t);
         if (readCount == 0)
             break;
-
         remainingBytes -= readCount * sizeof(std::int16_t);
 
-        const std::size_t inputFrames = readCount / 2;
-        // Convert 22050 stereo to 44100 stereo
-        for (std::size_t f = 0; f < inputFrames; ++f)
+        // Convert 22050 mono to 44100 stereo (same sample on both ears,
+        // frame-doubled -- the 3DS backend's own reading of these files).
+        for (std::size_t i = 0; i < readCount; ++i)
         {
-            const float left = rawSamples[f * 2 + 0] / 32768.0f;
-            const float right = rawSamples[f * 2 + 1] / 32768.0f;
-            const std::size_t outBase = f * 4;
-            stereo[outBase + 0] = left;
-            stereo[outBase + 1] = right;
-            stereo[outBase + 2] = left;
-            stereo[outBase + 3] = right;
+            const float s = rawSamples[i] / 32768.0f;
+            const std::size_t outBase = i * 4;
+            stereo[outBase + 0] = s;
+            stereo[outBase + 1] = s;
+            stereo[outBase + 2] = s;
+            stereo[outBase + 3] = s;
         }
 
-        std::size_t source = 0;
-        const std::size_t sampleCount = inputFrames * 4;
-        while (source < sampleCount)
-        {
-            std::unique_lock<std::mutex> lock(s_mutex);
-            s_condition.wait(lock, [] { return s_stop || s_count < kRingSamples; });
-            if (s_stop)
-            {
-                std::fclose(file);
-                s_running = false;
-                return;
-            }
-
-            const std::size_t freeSamples = kRingSamples - s_count;
-            const std::size_t contiguous = std::min(freeSamples, kRingSamples - s_write);
-            const std::size_t copyCount = std::min(contiguous, sampleCount - source);
-            std::copy_n(stereo.data() + source, copyCount, s_ring.data() + s_write);
-            s_write = (s_write + copyCount) % kRingSamples;
-            s_count += copyCount;
-            source += copyCount;
-        }
+        if (!ringWrite(stereo.data(), readCount * 4))
+            return; // stopped mid-write
     }
 
-    std::fclose(file);
-    std::lock_guard<std::mutex> lock(s_mutex);
-    s_eof = true;
-    if (s_count == 0)
-        s_running = false;
+    markEofAndMaybeStop();
+}
+
+void decoderAdpThread(std::string path)
+{
+    AssetReader reader;
+    std::uint8_t headerBytes[Ps2AdpcmStream::kHeaderBytes]{};
+
+    Ps2AdpcmStream::Header header{};
+    const bool opened = reader.open(path) &&
+        reader.read(headerBytes, sizeof(headerBytes)) == sizeof(headerBytes) &&
+        AdpAssetDecode::probe(headerBytes, reader.extent, header);
+    if (!opened)
+    {
+        markEofAndMaybeStop();
+        return;
+    }
+
+    using namespace Ps2AdpcmStream;
+    const bool stereo = header.channels == 2;
+    const std::uint32_t totalBlocks =
+        (header.samplesPerChannel + kSamplesPerBlock - 1u) / kSamplesPerBlock;
+    // Planar layout: the left plane starts after the header, the right
+    // channel's plane after the left plane's last block.
+    const std::size_t leftBase = kHeaderBytes;
+    const std::size_t rightBase = kHeaderBytes +
+        static_cast<std::size_t>(totalBlocks) * kBlockBytes;
+
+    ChannelState leftState{};
+    ChannelState rightState{};
+    std::array<std::uint8_t, kBlockBytes> block{};
+    std::array<std::int16_t, kSamplesPerBlock> leftPcm{};
+    std::array<std::int16_t, kSamplesPerBlock> rightPcm{};
+
+    // Batches of whole blocks keep the planar seeks linear-ish per rate
+    // conversion; 32 blocks = 896 source frames per push. Capacity holds one
+    // extra block so the threshold check can run after appending.
+    constexpr std::size_t kChunkBlocks = 32;
+    std::array<std::int16_t, (kChunkBlocks + 1) * kSamplesPerBlock * 2> chunkS16{};
+    std::vector<float> chunkFloat;
+    std::size_t chunkFrames = 0;
+
+    const auto flushChunk = [&]() -> bool
+    {
+        if (chunkFrames == 0)
+            return true;
+        AudioConvert::s16ToFloatStereo(chunkS16.data(), chunkFrames,
+                                       header.channels, header.sampleRate,
+                                       kOutputSampleRate, chunkFloat);
+        chunkFrames = 0;
+        return chunkFloat.empty() || ringWrite(chunkFloat.data(), chunkFloat.size());
+    };
+
+    for (std::uint32_t emitted = 0; emitted < header.samplesPerChannel;)
+    {
+        const std::uint32_t blockIndex = emitted / kSamplesPerBlock;
+        if (!reader.seek(leftBase + static_cast<std::size_t>(blockIndex) * kBlockBytes) ||
+            reader.read(block.data(), kBlockBytes) != kBlockBytes ||
+            !decodeBlock(block.data(), leftState, leftPcm.data()))
+        {
+            flushChunk();
+            markEofAndMaybeStop();
+            return;
+        }
+        if (stereo)
+        {
+            if (!reader.seek(rightBase + static_cast<std::size_t>(blockIndex) * kBlockBytes) ||
+                reader.read(block.data(), kBlockBytes) != kBlockBytes ||
+                !decodeBlock(block.data(), rightState, rightPcm.data()))
+            {
+                flushChunk();
+                markEofAndMaybeStop();
+                return;
+            }
+        }
+
+        const std::uint32_t blockFrames =
+            std::min<std::uint32_t>(kSamplesPerBlock, header.samplesPerChannel - emitted);
+        for (std::uint32_t frame = 0; frame < blockFrames; ++frame)
+        {
+            const std::size_t base = (chunkFrames + frame) * header.channels;
+            chunkS16[base] = leftPcm[frame];
+            if (stereo)
+                chunkS16[base + 1] = rightPcm[frame];
+        }
+        chunkFrames += blockFrames;
+        emitted += blockFrames;
+
+        if (chunkFrames >= kChunkBlocks * kSamplesPerBlock && !flushChunk())
+            return; // stopped mid-write
+    }
+
+    if (flushChunk())
+        markEofAndMaybeStop();
 }
 }
 
@@ -225,16 +293,16 @@ namespace PcMusicStream
 bool start(const std::string &path)
 {
     const bool isPcm = audioPathHasExtension(path, ".pcm");
-    const bool isOgg = audioPathHasExtension(path, ".ogg");
+    const bool isAdp = audioPathHasExtension(path, ".adp");
 
     if (isPcm)
     {
         if (!validatePcm(path))
             return false;
     }
-    else if (isOgg)
+    else if (isAdp)
     {
-        if (!validateOgg(path))
+        if (!validateAdp(path))
             return false;
     }
     else
@@ -252,7 +320,7 @@ bool start(const std::string &path)
         s_eof = false;
         s_running = true;
     }
-    s_thread = isPcm ? std::thread(decoderPcmThread, path) : std::thread(decoderThread, path);
+    s_thread = isPcm ? std::thread(decoderPcmThread, path) : std::thread(decoderAdpThread, path);
     {
         std::unique_lock<std::mutex> lock(s_mutex);
         s_condition.wait_for(lock, std::chrono::milliseconds(50), [] { return s_count >= 4096 || s_eof || s_stop; });

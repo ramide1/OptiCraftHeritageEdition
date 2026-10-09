@@ -37,14 +37,20 @@ void SoundManager::tryToSetLibraryAndCodecs() {}
 #include <vector>
 #include <mutex>
 #include <algorithm>
+#include <atomic>
+#include <thread>
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 
-#include "SDL.h"
+#include "AL/al.h"
+#include "AL/alc.h"
+#include "AL/alext.h"
 
-#include "pc/external/stb_vorbis.h"
 #include "platform/Resources.h"
-#include "platform/audio/VorbisAssetOpen.h"
+#include "platform/audio/Ps2AdpcmStreamDecoder.h"
+#include "platform/audio/AdpAssetDecode.h"
+#include "platform/audio/AudioConvert.h"
 #include "pc/audio/PcMusicStream.h"
 
 #include "net/minecraft/src/GameSettings.h"
@@ -55,10 +61,36 @@ void SoundManager::tryToSetLibraryAndCodecs() {}
 #include "platform/audio/AudioSpatialization.h"
 
 // ─── Internal audio mixer ────────────────────────────────────────────────────
+//
+// Asset formats (2026-10 unification): the desktop target consumes the same
+// pack shapes the 3DS backend registers, i.e. the tree scripts/ogg to * stages:
+//
+//   * one-shot SFX come as .adp (SPU2-ADPCM, adpenc output) only -- the PS2's
+//     own rule -- decoded here with the shared portable decoder
+//     (platform/audio/Ps2AdpcmStreamDecoder.*);
+//   * records/music arrive as raw 22050 Hz stereo s16le .pcm (scripts/ogg to
+//     pcm), .adp (an all-adp pack, scripts/ogg to adp over the whole tree) or
+//     the third script shape, headered RIFF .wav (scripts/ogg to wav).
+//
+// Runtime vorbis decode -- the expensive path the consoles cannot afford --
+// leaves the desktop target entirely, the same switch the 3DS backend made
+// when it moved from OGG to ADP and the Wii backend makes with it.
+// (src/pc/external/stb_vorbis.* stays in the repo untouched; no backend
+// decodes Vorbis at runtime anymore.)
+//
+// Output device: OpenAL (the vendored openal-soft). The app keeps its own
+// software mixer verbatim (32 channels, Sound/Music/Streaming buses and
+// listener attenuation from AudioSpatialization.h -- the same math the
+// console backends share), and the mixed float-stereo 44100 Hz stream is
+// pushed into ONE flat 2D OpenAL source through a 4x1024-frame buffer
+// queue refilled by a small worker thread. No AL 3D positioning is used,
+// so distance semantics stay bit-identical with the other platforms.
 
-static constexpr int SAMPLE_RATE   = 44100;
-static constexpr int CHANNELS      = 2;      // stereo
-static constexpr int MAX_SOUNDS    = 32;     // concurrent sound slots
+static constexpr int SAMPLE_RATE       = 44100;
+static constexpr int CHANNELS          = 2;   // stereo
+static constexpr int MAX_SOUNDS        = 32;  // concurrent sound slots
+static constexpr int AL_BUFFER_FRAMES  = 1024;
+static constexpr int AL_BUFFER_COUNT   = 4;   // ~93 ms of buffered audio
 
 enum class AudioBus
 {
@@ -78,7 +110,13 @@ struct AudioChannel
     AudioBus bus   = AudioBus::Sound;
 };
 
-static SDL_AudioDeviceID s_device   = 0;
+static ALCdevice        *s_device   = nullptr;
+static ALCcontext       *s_context  = nullptr;
+static ALuint            s_source   = 0;
+static ALuint            s_buffers[AL_BUFFER_COUNT] = {};
+static bool              s_floatFrames = false; // AL_EXT_float32 present
+static std::thread       s_mixerThread;
+static std::atomic<bool> s_mixerRun{false};
 static AudioChannel      s_channels[MAX_SOUNDS];
 static std::mutex        s_mutex;
 static float             s_soundVolume   = 1.0f;
@@ -87,72 +125,82 @@ static int               s_musicChannel  = -1; // index into s_channels, or -1
 static int               s_streamingChannel = -1;
 static AudioListenerState s_listener;
 
-// Decode an OGG file to float PCM (mono → stereo interleaved, 44100 Hz)
-static std::vector<float> decodeOgg(const std::string &path, float pitch)
+// Whole-file SPU2-ADPCM decode -> float stereo at the mixer rate, through
+// the shared planar decoder (platform/audio/AdpAssetDecode.h). The header's
+// loop flag is ignored: a one-shot plays exactly samplesPerChannel frames.
+static std::vector<float> decodeAdp(const std::string &path)
 {
-    int channels, sampleRate;
-    short *pcmShort = nullptr;
-    int samples = platformDecodeVorbis(path, &channels, &sampleRate, &pcmShort);
-    if (samples <= 0 || pcmShort == nullptr)
-        return {};
-
-    // Resample + convert to float stereo
-    std::vector<float> out;
-    out.reserve((size_t)samples * 2);
-    for (int i = 0; i < samples; i++)
-    {
-        float l = pcmShort[i * channels + 0] / 32768.0f;
-        float r = (channels > 1) ? pcmShort[i * channels + 1] / 32768.0f : l;
-        out.push_back(l);
-        out.push_back(r);
-    }
-    free(pcmShort);
-    return out;
-}
-
-// Decode a WAV file to float PCM stereo
-static std::vector<float> decodeWav(const std::string &path)
-{
-    SDL_AudioSpec spec;
-    Uint8 *buf = nullptr;
-    Uint32 len = 0;
-    // SDL_LoadWAV_RW over the bytes so a pak entry loads the same way a loose
-    // file does; PlatformResources::loadFile reads either.
     unsigned int fileBytes = 0;
     unsigned char *fileData = PlatformResources::loadFile(path, &fileBytes);
     if (fileData == nullptr)
         return {};
-    SDL_RWops *rw = SDL_RWFromConstMem(fileData, (int)fileBytes);
-    const bool loaded = rw != nullptr && SDL_LoadWAV_RW(rw, 1, &spec, &buf, &len) != nullptr;
+
+    Ps2AdpcmStream::Header header{};
+    std::vector<std::int16_t> interleaved;
+    std::uint32_t frames = 0;
+    if (AdpAssetDecode::probe(fileData, fileBytes, header))
+        frames = AdpAssetDecode::decode(fileData, fileBytes, header, interleaved);
     std::free(fileData);
-    if (!loaded)
+    if (frames == 0)
         return {};
 
-    SDL_AudioCVT cvt;
-    SDL_BuildAudioCVT(&cvt,
-        spec.format, spec.channels, spec.freq,
-        AUDIO_F32SYS, CHANNELS, SAMPLE_RATE);
+    std::vector<float> out;
+    AudioConvert::s16ToFloatStereo(interleaved.data(), frames,
+                                   header.channels, header.sampleRate, SAMPLE_RATE, out);
+    return out;
+}
 
-    std::vector<Uint8> cvtBuf(len * (cvt.len_mult ? cvt.len_mult : 1));
-    std::memcpy(cvtBuf.data(), buf, len);
-    SDL_FreeWAV(buf);
+// Raw s16le mono 22050 with no header (scripts/ogg to pcm) -- the pack's
+// music/streaming shape, same reading as the 3DS backend.
+static std::vector<float> decodePcm(const std::string &path)
+{
+    unsigned int fileBytes = 0;
+    unsigned char *fileData = PlatformResources::loadFile(path, &fileBytes);
+    if (fileData == nullptr)
+        return {};
 
-    cvt.buf = cvtBuf.data();
-    cvt.len = (int)len;
-    SDL_ConvertAudio(&cvt);
+    constexpr int kRawPcmRate = 22050;
+    constexpr int kRawPcmChannels = 1;
+    const size_t frames = fileBytes / (sizeof(std::int16_t) * kRawPcmChannels);
 
-    size_t floatSamples = cvt.len_cvt / sizeof(float);
-    std::vector<float> out(floatSamples);
-    std::memcpy(out.data(), cvtBuf.data(), cvt.len_cvt);
+    std::vector<float> out;
+    AudioConvert::s16ToFloatStereo(reinterpret_cast<const std::int16_t *>(fileData),
+                                   frames, kRawPcmChannels, kRawPcmRate, SAMPLE_RATE, out);
+    std::free(fileData);
+    return out;
+}
+
+// Decode a RIFF/WAVE blob to float stereo at the mixer rate. Loads through
+// PlatformResources so a pak entry parses the same way a loose file does.
+static std::vector<float> decodeWav(const std::string &path)
+{
+    unsigned int fileBytes = 0;
+    unsigned char *fileData = PlatformResources::loadFile(path, &fileBytes);
+    if (fileData == nullptr)
+        return {};
+
+    std::vector<std::int16_t> interleaved;
+    int channels = 0, rate = 0;
+    const bool ok = AudioConvert::wavDecodeS16(fileData, fileBytes, interleaved, channels, rate);
+    std::free(fileData);
+    if (!ok)
+        return {};
+
+    std::vector<float> out;
+    AudioConvert::s16ToFloatStereo(interleaved.data(), interleaved.size() / channels,
+                                   channels, rate, SAMPLE_RATE, out);
     return out;
 }
 
 static std::vector<float> loadSound(const std::string &path, float pitch = 1.0f)
 {
-    if (path.size() >= 4 && path.substr(path.size() - 4) == ".ogg")
-        return decodeOgg(path, pitch);
-    if (path.size() >= 4 && path.substr(path.size() - 4) == ".wav")
+    if (audioPathHasExtension(path, ".adp"))
+        return decodeAdp(path);
+    if (audioPathHasExtension(path, ".pcm"))
+        return decodePcm(path);
+    if (audioPathHasExtension(path, ".wav"))
         return decodeWav(path);
+    (void)pitch;
     return {};
 }
 
@@ -188,13 +236,11 @@ static void stopChannel(int idx, AudioBus expectedBus)
     s_channels[idx].pos = 0;
 }
 
-// SDL2 audio callback – mixes all active channels into float32 stereo
-static void audioCallback(void * /*userdata*/, Uint8 *stream, int len)
+// Mix all active channels plus the music stream into float32 stereo (this is
+// the exact mixing contract the SDL audio callback ran before etapa 2).
+static void mixFrames(float *out, int frames)
 {
-    float *out   = reinterpret_cast<float *>(stream);
-    int   frames = len / (int)(sizeof(float) * CHANNELS);
-
-    std::memset(stream, 0, len);
+    std::memset(out, 0, static_cast<size_t>(frames) * CHANNELS * sizeof(float));
 
     float musicVolume = 1.0f;
     {
@@ -235,6 +281,112 @@ static void audioCallback(void * /*userdata*/, Uint8 *stream, int len)
     }
 }
 
+// Refill one dequeued buffer with the next mix chunk.
+static void fillBuffer(ALuint buffer)
+{
+    static thread_local std::vector<float> pcm;
+    pcm.assign(static_cast<size_t>(AL_BUFFER_FRAMES) * CHANNELS, 0.0f);
+    mixFrames(pcm.data(), AL_BUFFER_FRAMES);
+
+    if (s_floatFrames)
+    {
+        alBufferData(buffer, AL_FORMAT_STEREO_FLOAT32, pcm.data(),
+                     static_cast<ALsizei>(pcm.size() * sizeof(float)), SAMPLE_RATE);
+        return;
+    }
+
+    // No AL_EXT_float32 (any system OpenAL that is not openal-soft): play the
+    // same mix as 16-bit PCM instead.
+    static thread_local std::vector<std::int16_t> pcm16;
+    pcm16.resize(pcm.size());
+    for (size_t i = 0; i < pcm.size(); ++i)
+    {
+        const float v = std::max(-1.0f, std::min(1.0f, pcm[i]));
+        pcm16[i] = static_cast<std::int16_t>(v * 32767.0f);
+    }
+    alBufferData(buffer, AL_FORMAT_STEREO16, pcm16.data(),
+                 static_cast<ALsizei>(pcm16.size() * sizeof(std::int16_t)), SAMPLE_RATE);
+}
+
+// Worker: keep the source's queue topped up and the source playing. OpenAL
+// has no pull callback, so this thread fills the role the SDL audio-device
+// callback played before; 4x1024 frames (~93 ms) make a 4 ms poll loop
+// comfortably ahead of the drain rate.
+static void mixerLoop()
+{
+    // openal-soft tracks the current context per thread.
+    alcMakeContextCurrent(s_context);
+    while (s_mixerRun.load(std::memory_order_relaxed))
+    {
+        ALint processed = 0;
+        alGetSourcei(s_source, AL_BUFFERS_PROCESSED, &processed);
+        while (processed-- > 0)
+        {
+            ALuint buffer = 0;
+            alSourceUnqueueBuffers(s_source, 1, &buffer);
+            fillBuffer(buffer);
+            alSourceQueueBuffers(s_source, 1, &buffer);
+        }
+
+        ALint state = AL_STOPPED;
+        alGetSourcei(s_source, AL_SOURCE_STATE, &state);
+        if (state != AL_PLAYING)
+        {
+            ALint queued = 0;
+            alGetSourcei(s_source, AL_BUFFERS_QUEUED, &queued);
+            if (queued > 0)
+                alSourcePlay(s_source);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+}
+
+// Tear down whatever tryToSetLibraryAndCodecs() managed to set up; safe on a
+// partial init (any mix of null handles counts as "nothing set").
+static void shutdownOpenAL()
+{
+    s_mixerRun.store(false, std::memory_order_relaxed);
+    if (s_mixerThread.joinable())
+        s_mixerThread.join();
+
+    // The mixer thread may have re-pointed the process-wide current context
+    // (or its own thread-local one); make sure the teardown thread owns one.
+    if (s_context != nullptr)
+        alcMakeContextCurrent(s_context);
+
+    if (s_source != 0)
+    {
+        alSourceStop(s_source);
+        ALint queued = 0;
+        alGetSourcei(s_source, AL_BUFFERS_QUEUED, &queued);
+        while (queued-- > 0)
+        {
+            ALuint buffer = 0;
+            alSourceUnqueueBuffers(s_source, 1, &buffer);
+        }
+        alDeleteSources(1, &s_source);
+        s_source = 0;
+    }
+    if (s_buffers[0] != 0)
+    {
+        alDeleteBuffers(AL_BUFFER_COUNT, s_buffers);
+        std::memset(s_buffers, 0, sizeof(s_buffers));
+    }
+    if (s_context != nullptr)
+    {
+        alcMakeContextCurrent(nullptr);
+        alcDestroyContext(s_context);
+        s_context = nullptr;
+    }
+    if (s_device != nullptr)
+    {
+        alcCloseDevice(s_device);
+        s_device = nullptr;
+    }
+    // SoundManager::sndSystem is reset by closeMinecraft(), which owns the
+    // member access; this free function only releases the AL objects.
+}
+
 // ─── SoundManager static members ─────────────────────────────────────────────
 
 void *SoundManager::sndSystem = nullptr;
@@ -272,20 +424,66 @@ void SoundManager::tryToSetLibraryAndCodecs()
 {
     if (loaded) return;
 
-    SDL_AudioSpec want{}, have{};
-    want.freq     = SAMPLE_RATE;
-    want.format   = AUDIO_F32SYS;
-    want.channels = CHANNELS;
-    want.samples  = 1024;
-    want.callback = audioCallback;
+#if !defined(AL_FORMAT_STEREO_FLOAT32)
+    // alext.h guards AL_EXT_float32 constants behind the extension define;
+    // the vendored openal-soft headers always provide them.
+    MC_LOG_ERROR("audio", "AL headers missing AL_EXT_float32, cannot start\n");
+    return;
+#endif
 
-    s_device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
-    if (s_device == 0)
+    s_device = alcOpenDevice(nullptr);
+    if (s_device == nullptr)
     {
-        MC_LOG_ERROR("audio", "SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
+        MC_LOG_ERROR("audio", "alcOpenDevice failed: no OpenAL device available\n");
         return;
     }
-    SDL_PauseAudioDevice(s_device, 0); // start playback
+
+    const ALCint attrs[] = {
+        ALC_FREQUENCY,      SAMPLE_RATE,
+        ALC_STEREO_SOURCES, AL_BUFFER_COUNT,
+        0
+    };
+    s_context = alcCreateContext(s_device, attrs);
+    if (s_context == nullptr || !alcMakeContextCurrent(s_context))
+    {
+        MC_LOG_ERROR("audio", "alcCreateContext failed (err=0x%x)\n", alcGetError(s_device));
+        shutdownOpenAL();
+        return;
+    }
+
+    // The mixer bakes distance attenuation itself; the single output stream
+    // must not be re-attenuated by the AL distance model.
+    alDistanceModel(AL_NONE);
+    s_floatFrames = alIsExtensionPresent("AL_EXT_float32") == AL_TRUE;
+
+    alGenSources(1, &s_source);
+    alGenBuffers(AL_BUFFER_COUNT, s_buffers);
+    if (s_source == 0 || s_buffers[0] == 0 || alGetError() != AL_NO_ERROR)
+    {
+        MC_LOG_ERROR("audio", "alGenSources/alGenBuffers failed\n");
+        shutdownOpenAL();
+        return;
+    }
+
+    // Prime the queue with a full round of silence/mix, then hand refills to
+    // the worker thread.
+    for (int i = 0; i < AL_BUFFER_COUNT; ++i)
+    {
+        fillBuffer(s_buffers[i]);
+        alSourceQueueBuffers(s_source, 1, &s_buffers[i]);
+    }
+    if (alGetError() != AL_NO_ERROR)
+    {
+        MC_LOG_ERROR("audio", "alBufferData/alSourceQueueBuffers failed\n");
+        shutdownOpenAL();
+        return;
+    }
+    alSourcePlay(s_source);
+
+    s_mixerRun.store(true, std::memory_order_relaxed);
+    s_mixerThread = std::thread(mixerLoop);
+
+    sndSystem = s_device; // the "OpenAL handle" the opaque pointer stands for
     loaded = true;
 }
 
@@ -316,12 +514,8 @@ void SoundManager::onSoundOptionsChanged()
 void SoundManager::closeMinecraft()
 {
     PcMusicStream::stop();
-    if (s_device)
-    {
-        SDL_PauseAudioDevice(s_device, 1);
-        SDL_CloseAudioDevice(s_device);
-        s_device = 0;
-    }
+    shutdownOpenAL();
+    sndSystem = nullptr;
 
     {
         std::lock_guard<std::mutex> lock(s_mutex);
@@ -341,19 +535,23 @@ void SoundManager::closeMinecraft()
 
 void SoundManager::addSound(const jstring &s, const std::string &file)
 {
-    if (audioPathHasExtension(file, ".ogg") || audioPathHasExtension(file, ".wav"))
+    // The PS2 rule for one-shots: .adp only (scripts/ogg to adp).
+    if (audioPathHasExtension(file, ".adp"))
         soundPoolSounds.addSound(s, file);
 }
 
 void SoundManager::addStreaming(const jstring &s, const std::string &file)
 {
-    if (audioPathHasExtension(file, ".ogg") || audioPathHasExtension(file, ".wav") || audioPathHasExtension(file, ".pcm"))
+    // Same trio the 3DS registers, so a PS2-staged pack works unmodified.
+    if (audioPathHasExtension(file, ".adp") || audioPathHasExtension(file, ".pcm") ||
+        audioPathHasExtension(file, ".wav"))
         soundPoolStreaming.addSound(s, file);
 }
 
 void SoundManager::addMusic(const jstring &s, const std::string &file)
 {
-    if (audioPathHasExtension(file, ".ogg") || audioPathHasExtension(file, ".wav") || audioPathHasExtension(file, ".pcm"))
+    if (audioPathHasExtension(file, ".adp") || audioPathHasExtension(file, ".pcm") ||
+        audioPathHasExtension(file, ".wav"))
         soundPoolMusic.addSound(s, file);
 }
 
@@ -372,7 +570,7 @@ bool SoundManager::playMusicFileNow(const std::string &file)
     if (PcMusicStream::active())
         return false;
 
-    if (audioPathHasExtension(file, ".ogg") || audioPathHasExtension(file, ".pcm"))
+    if (audioPathHasExtension(file, ".adp") || audioPathHasExtension(file, ".pcm"))
     {
         if (s_musicChannel >= 0)
             stopChannel(s_musicChannel, AudioBus::Music);
@@ -426,7 +624,8 @@ void SoundManager::playRandomMusicIfReady()
     if (entry == nullptr)
         return;
 
-    if (audioPathHasExtension(entry->soundUrl, ".ogg") || audioPathHasExtension(entry->soundUrl, ".pcm"))
+    if (audioPathHasExtension(entry->soundUrl, ".adp") ||
+        audioPathHasExtension(entry->soundUrl, ".pcm"))
     {
         PcMusicStream::start(entry->soundUrl);
         s_musicChannel = -1;

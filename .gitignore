@@ -396,8 +396,10 @@ ninja.exe
 /assets/*
 !/assets/.gitkeep
 !/assets/cursor.png
-# Pinned SDL_net clone — never tracked (adding it as a gitlink broke git)
-/external/SDL_net/
+# No SDL_net remains in-tree since the 2026-10 submodule conversion
+# (see .gitmodules): desktop sockets are native (Winsock/BSD, like the
+# console backends), so there is no untracked-clone workaround and no
+# ignore rule for it any more.
 !src/ps2/storage/assets/
 extracted_assets/
 extracted_assets_vanilla/

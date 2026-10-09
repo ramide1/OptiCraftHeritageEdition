@@ -1,9 +1,10 @@
 #pragma once
 
 // Shared key-name lookup for platforms with no OS-level "give me a label for
-// this key" API (PS2, Wii — PC uses SDL_GetKeyName instead). Covers the keys
-// reachable from GameSettings' default and common rebinding choices; anything
-// else is left to the caller to fall back on.
+// this key" API (PS2, Wii, and the GLFW desktop port — GLFW's glfwGetKeyName
+// only labels printable keys, so it cannot back Keyboard::getKeyName).
+// Covers the keys reachable from GameSettings' default and common rebinding
+// choices; anything else falls back on the caller's "KEY <code>" rendering.
 
 #include "lwjgl/Keyboard.h"
 

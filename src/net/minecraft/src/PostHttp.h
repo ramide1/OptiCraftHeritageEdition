@@ -13,6 +13,9 @@ public:
     static std::string func_52018_a(const std::string &url, const Parameters &parameters, bool silent);
     static std::string func_52017_a(const std::string &url, const std::string &body, bool silent);
 
-private:
+    // Percent-encoding for ad-hoc query/form bodies -- the Microsoft login
+    // flow builds its device-code requests from raw field lists.
     static std::string urlEncode(const std::string &value);
+
+private:
 };

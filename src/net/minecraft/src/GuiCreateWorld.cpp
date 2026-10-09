@@ -12,6 +12,7 @@
 #include "PlayerControllerSP.h"
 #include "PlayerControllerCreative.h"
 #include "Minecraft.h"
+#include "SoundManager.h"
 #include "java/Random.h"
 #include "java/String.h"
 #include "pc/lwjgl/Keyboard.h"
@@ -116,6 +117,7 @@ void GuiCreateWorld::updateFolderName()
 void GuiCreateWorld::updateButtonText()
 {
     StringTranslate *tr = StringTranslate::getInstance();
+    const bool isEs = (tr != nullptr && tr->getCurrentLanguage().rfind("es_", 0) == 0);
     gameModeButton->displayString = tr->translateKey("selectWorld.gameMode") + " " +
         tr->translateKey("selectWorld.gameMode." + gameMode);
     gameModeDescriptionLine1 = tr->translateKey("selectWorld.gameMode." + gameMode + ".line1");
@@ -132,27 +134,24 @@ void GuiCreateWorld::updateButtonText()
     worldTypeButton->displayString = tr->translateKey("selectWorld.mapType") + " " +
         tr->translateKey(type->getTranslateName());
 
-    if (worldSizeButton != nullptr)
+    // Spanish world size names
+    if (worldSizeType == 0)
     {
-        const bool isEs = (tr != nullptr && tr->getCurrentLanguage().rfind("es_", 0) == 0);
-        if (worldSizeType == 1)
-        {
-            worldSizeButton->displayString = isEs
-                ? "Tamaño: Antiguo (256x256)"
-                : "World Size: Old (256x256)";
-        }
-        else if (worldSizeType == 2)
-        {
-            worldSizeButton->displayString = isEs
-                ? "Tamaño: Legacy 864x864"
-                : "World Size: Legacy 864x864";
-        }
-        else
-        {
-            worldSizeButton->displayString = isEs
-                ? "Tamaño: Infinito"
-                : "World Size: Infinite";
-        }
+        worldSizeButton->displayString = isEs
+            ? "Tamaño: Infinito"
+            : "World Size: Infinite";
+    }
+    else if (worldSizeType == 1)
+    {
+        worldSizeButton->displayString = isEs
+            ? "Tamaño: Antiguo (256x256)"
+            : "World Size: Old (256x256)";
+    }
+    else if (worldSizeType == 2)
+    {
+        worldSizeButton->displayString = isEs
+            ? "Tamaño: Legacy 864x864"
+            : "World Size: Legacy 864x864";
     }
 }
 
@@ -251,6 +250,7 @@ void GuiCreateWorld::actionPerformed(GuiButton *button)
             worldSizeButton->enabled2 = moreOptions;
         moreWorldOptionsButton->displayString = StringTranslate::getInstance()->translateKey(
             moreOptions ? "gui.done" : "selectWorld.moreWorldOptions");
+        selectNextField();
     }
     else if (button->id == 7)
     {
@@ -298,6 +298,21 @@ void GuiCreateWorld::actionPerformed(GuiButton *button)
 
 void GuiCreateWorld::keyTyped(char_t c, int_t key)
 {
+    // Handle ESCAPE/B button: in moreOptions mode, go back to main screen instead of closing
+    if (key == 1 && moreOptions)
+    {
+        moreOptions = false;
+        gameModeButton->enabled2 = true;
+        generateStructuresButton->enabled2 = false;
+        worldTypeButton->enabled2 = false;
+        if (worldSizeButton != nullptr)
+            worldSizeButton->enabled2 = false;
+        moreWorldOptionsButton->displayString = StringTranslate::getInstance()->translateKey("selectWorld.moreWorldOptions");
+        if (mc != nullptr && mc->sndManager != nullptr)
+            mc->sndManager->playSoundFX("random.back", 1.0f, 1.0f);
+        return;
+    }
+
     if (textboxWorldName->getFocused() && !moreOptions)
     {
         textboxWorldName->textboxKeyTyped(c, key);

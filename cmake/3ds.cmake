@@ -54,6 +54,7 @@ option(3DS_GC_SECTIONS "Compile with -ffunction-sections/-fdata-sections (the li
 # Diagnostic verbosity shared by every target. See src/platform/Log.h.
 set(MC_LOG_LEVEL "0" CACHE STRING "Unified diagnostic verbosity: 0=off, 1=info, 2=debug, 3=trace")
 set_property(CACHE MC_LOG_LEVEL PROPERTY STRINGS 0 1 2 3)
+set(OPTICRAFT_MSA_CLIENT_ID "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb" CACHE STRING "Microsoft identity platform client id for the login flow (empty = login unavailable; default is PrismLauncher's public id, see CMakeLists.txt)")
 
 # --- Source selection ---------------------------------------------------------
 if(3DS_BRINGUP)
@@ -106,17 +107,18 @@ else()
     endforeach()
     list(APPEND 3DS_SOURCES ${3DS_ZLIB_SOURCES})
 
-    # quirc (external/quirc, ISC license) -- the QR decoder behind the
-    # "Descarga QR" screen (src/3ds/qr): the 3DS camera hands it grayscale
+    # quirc (external/quirc submodule, ISC license) -- the QR decoder behind
+    # the "Descarga QR" screen (src/3ds/qr): the 3DS camera hands it grayscale
     # frames and it returns the scanned URL. Plain C89 with no dependencies
     # and no floating point, so it compiles into this target as-is. Only the
     # 3DS compiles it: it is the only platform with a camera to scan codes
-    # with, so a desktop or console link never drags it in.
+    # with, so a desktop or console link never drags it in. Upstream keeps
+    # the sources under lib/ (the old vendored extract had them at the root).
     set(3DS_QUIRC_SOURCES
-        "${CMAKE_SOURCE_DIR}/external/quirc/quirc.c"
-        "${CMAKE_SOURCE_DIR}/external/quirc/decode.c"
-        "${CMAKE_SOURCE_DIR}/external/quirc/identify.c"
-        "${CMAKE_SOURCE_DIR}/external/quirc/version_db.c"
+        "${CMAKE_SOURCE_DIR}/external/quirc/lib/quirc.c"
+        "${CMAKE_SOURCE_DIR}/external/quirc/lib/decode.c"
+        "${CMAKE_SOURCE_DIR}/external/quirc/lib/identify.c"
+        "${CMAKE_SOURCE_DIR}/external/quirc/lib/version_db.c"
     )
     list(APPEND 3DS_SOURCES ${3DS_QUIRC_SOURCES})
 
@@ -130,13 +132,12 @@ else()
 
     # The 3DS audio backend consumes the PS2's ADP assets (SPU2-ADPCM,
     # adpenc output -- see src/platform/audio/SoundManager_3DS.cpp), decoded
-    # with the portable software decoder the PS2 streamer uses. That single
-    # file is listed here explicitly: it lives under src/ps2/audio but is
-    # pure C++ with no PS2 SDK dependency -- the same cross-tree listing
-    # shape stb_vorbis.cpp had here before the backend switched from OGG to
-    # ADP (with that switch, stb_vorbis and the desktop OGG tree leave this
-    # target entirely).
-    list(APPEND 3DS_SOURCES "${CMAKE_SOURCE_DIR}/src/ps2/audio/Ps2AdpcmStreamDecoder.cpp")
+    # with the portable software decoder in src/platform/audio
+    # (Ps2AdpcmStreamDecoder.* plus AdpAssetDecode.h). Those files are part
+    # of the common platform sources every target compiles, so nothing is
+    # listed here explicitly -- the same shape stb_vorbis.cpp had here before
+    # the backend switched from OGG to ADP (with that switch, stb_vorbis and
+    # the desktop OGG tree leave this target entirely).
 
     # Wii stores stats locally, so the desktop synchronizer/JSON/MD5 stack is
     # unreachable and must not enter the target. Same on 3DS (saves are on SD).
@@ -258,6 +259,11 @@ target_compile_definitions(OptiCraft PRIVATE
     # A level, not a boolean, so it is passed through as-is rather than through
     # $<BOOL:>, which would collapse 2 to 1.
     MC_LOG_LEVEL=${MC_LOG_LEVEL}
+    # Microsoft login: the transport (3ds-curl, certificate-verified against
+    # the staged CA bundle) ships with networking; the flow only needs a
+    # client id at build time ("build 3ds.bat -DOPTICRAFT_MSA_CLIENT_ID=...").
+    # Empty keeps the login UI hidden and the offline identity working.
+    OPTICRAFT_MSA_CLIENT_ID="${OPTICRAFT_MSA_CLIENT_ID}"
 )
 if(NOT 3DS_ENABLE_SOUND)
     target_compile_definitions(OptiCraft PRIVATE "NO_SOUND")
@@ -275,7 +281,8 @@ target_include_directories(OptiCraft PRIVATE
     "${CMAKE_SOURCE_DIR}/external/stb"
     "${CMAKE_SOURCE_DIR}/external/zlib/contrib/minizip"
     # quirc: vendored QR decoder (see the 3DS_QUIRC_SOURCES block above).
-    "${CMAKE_SOURCE_DIR}/external/quirc"
+    # The upstream layout keeps headers/sources under lib/.
+    "${CMAKE_SOURCE_DIR}/external/quirc/lib"
     # zlib itself (see the 3DS_ZLIB_SOURCES block: source dir for zlib.h,
     # build dir for the generated zconf.h).
     "${CMAKE_SOURCE_DIR}/external/zlib"
@@ -436,6 +443,11 @@ add_custom_target(3ds-data
             "${CMAKE_SOURCE_DIR}/data/assets" "${3DS_APP_DIR}/data/assets"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/data/resources_ps2" "${3DS_APP_DIR}/data/resources"
+    # The Microsoft login transport verifies TLS against this bundle
+    # (AuthBackend_3DS.cpp); unlike data/, it is tracked, so the SD tree
+    # carries it on every staging pass.
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/resources/cacert.pem" "${3DS_APP_DIR}/cacert.pem"
     COMMENT "Staging data/ into ${3DS_APP_DIR}/data"
     VERBATIM
 )

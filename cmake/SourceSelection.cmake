@@ -102,6 +102,11 @@ function(mcbeta_select_platform_backends list_var platform render_backend sound_
         "[/\\\\]platform[/\\\\]RenderLightingProfile_(PC|WII|PS2|3DS)\\.cpp$")
     mcbeta_select_backend(${list_var} platform TextureResidencyPolicy ${platform}
         "[/\\\\]platform[/\\\\]TextureResidencyPolicy_(PC|WII|PS2|3DS)\\.cpp$")
+    # Login transport (Microsoft account): PC = vendored Mbed TLS, always
+    # wired by the desktop target, 3DS = 3ds-curl against the staged CA
+    # bundle, Wii/PS2 = offline only.
+    mcbeta_select_backend(${list_var} platform AuthBackend ${platform}
+        "[/\\\\]platform[/\\\\]AuthBackend_(PC|WII|PS2|3DS)\\.cpp$")
     set(${list_var} "${${list_var}}" PARENT_SCOPE)
 endfunction()
 

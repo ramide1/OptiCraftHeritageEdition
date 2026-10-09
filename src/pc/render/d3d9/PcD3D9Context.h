@@ -4,11 +4,11 @@
 
 #if PLATFORM_PC && defined(MC_WIN32)
 
-struct SDL_Window;
+struct GLFWwindow;
 struct IDirect3D9;
 struct IDirect3DDevice9;
 
-bool pcD3D9Initialize(SDL_Window* window, int requestedSamples);
+bool pcD3D9Initialize(GLFWwindow* window, int requestedSamples);
 void pcD3D9Shutdown();
 bool pcD3D9Present();
 void pcD3D9RequestResize();

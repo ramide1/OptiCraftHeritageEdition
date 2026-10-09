@@ -2,7 +2,7 @@
 
 
 #include <glad/glad.h>
-#include <SDL.h>
+#include <GLFW/glfw3.h>
 #ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
 #define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
 #endif
@@ -52,11 +52,14 @@ static bool desktopHasOpenGL12()
     return major > 1 || (major == 1 && minor >= 2);
 }
 
-// SDL_GL_GetProcAddress-based runtime loaders (desktop only).
+// glfwGetProcAddress-based runtime loaders (desktop only).
 static void *getProcEither(const char *arbName, const char *coreName)
 {
-	void *f = SDL_GL_GetProcAddress(arbName);
-	if (!f) f = SDL_GL_GetProcAddress(coreName);
+	// glfwGetProcAddress returns a function pointer rather than the void*
+	// SDL_GL_GetProcAddress used to; the reinterpret_cast is the usual
+	// pointer-to-void* extension every desktop compiler accepts.
+	void *f = reinterpret_cast<void *>(glfwGetProcAddress(arbName));
+	if (!f) f = reinterpret_cast<void *>(glfwGetProcAddress(coreName));
 	return f;
 }
 
@@ -344,7 +347,7 @@ void renderApplyTextureQuality(bool blur, int mipmapLevel, bool mipmapLinear, in
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, mipmapLevel > 0 ? mipmapLevel : 0);
     }
 
-    if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic") == SDL_TRUE)
+    if (glfwExtensionSupported("GL_EXT_texture_filter_anisotropic") == GLFW_TRUE)
     {
         GLfloat maximum = 1.0f;
         glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maximum);
@@ -356,7 +359,7 @@ void renderApplyTextureQuality(bool blur, int mipmapLevel, bool mipmapLinear, in
 
 int renderGetMaxAnisotropy()
 {
-    if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic") != SDL_TRUE)
+    if (glfwExtensionSupported("GL_EXT_texture_filter_anisotropic") != GLFW_TRUE)
         return 1;
     GLfloat maximum = 1.0f;
     glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maximum);
@@ -365,10 +368,14 @@ int renderGetMaxAnisotropy()
 
 int renderGetMaxSamples()
 {
+    // The default framebuffer's actual sample count, read back through the
+    // GL 1.3 multisample queries — GLFW degrades the requested GLFW_SAMPLES
+    // hint itself when the format is unavailable (see GLContext.cpp), so
+    // this reports what was really created.
     int buffers = 0;
     int samples = 0;
-    SDL_GL_GetAttribute(SDL_GL_MULTISAMPLEBUFFERS, &buffers);
-    SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &samples);
+    glGetIntegerv(GL_SAMPLE_BUFFERS, &buffers);
+    glGetIntegerv(GL_SAMPLES, &samples);
     return buffers > 0 && samples > 0 ? samples : 0;
 }
 
@@ -511,13 +518,13 @@ bool renderSupportsFeature(RenderFeature feature)
     switch (feature)
     {
         case RenderFeature::FancyFogDistance:
-            return SDL_GL_ExtensionSupported("GL_NV_fog_distance") == SDL_TRUE;
+            return glfwExtensionSupported("GL_NV_fog_distance") == GLFW_TRUE;
         case RenderFeature::OcclusionQuery:
-            return SDL_GL_ExtensionSupported("GL_ARB_occlusion_query") == SDL_TRUE;
+            return glfwExtensionSupported("GL_ARB_occlusion_query") == GLFW_TRUE;
         case RenderFeature::Mipmaps:
             return desktopHasOpenGL12();
         case RenderFeature::AnisotropicFiltering:
-            return SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic") == SDL_TRUE;
+            return glfwExtensionSupported("GL_EXT_texture_filter_anisotropic") == GLFW_TRUE;
         case RenderFeature::MultisampleAntialiasing:
             return renderGetMaxSamples() > 0;
     }

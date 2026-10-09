@@ -4,11 +4,9 @@
 
 #include "lwjgl/GLContext.h"
 #include "lwjgl/Display.h"
+#include "pc/lwjgl/GlfwEvents.h"
 
-#include "external/SDLException.h"
-
-#include "SDL_video.h"
-#include "SDL_mouse.h"
+#include <GLFW/glfw3.h>
 
 namespace lwjgl
 {
@@ -19,41 +17,19 @@ static int_t staging_dx = 0;
 static int_t staging_dy = 0;
 static int_t staging_dz = 0;
 
-// SDL orders the first three buttons as left, middle, right (1, 2, 3),
-// while LWJGL orders them as left, right, middle (0, 1, 2).
-static int_t buttonSDLToLWJGL(Uint8 button)
-{
-	switch (button)
-	{
-		case SDL_BUTTON_LEFT:   return 0;
-		case SDL_BUTTON_RIGHT:  return 1;
-		case SDL_BUTTON_MIDDLE: return 2;
-		default:                return button > 0 ? button - 1 : -1;
-	}
-}
-
-static Uint8 buttonLWJGLToSDL(int_t button)
-{
-	switch (button)
-	{
-		case 0:  return SDL_BUTTON_LEFT;
-		case 1:  return SDL_BUTTON_RIGHT;
-		case 2:  return SDL_BUTTON_MIDDLE;
-		default: return button >= 0 ? static_cast<Uint8>(button + 1) : 0;
-	}
-}
+static bool grabbed = false;
 
 namespace detail
 {
 
 struct Event
 {
-	Sint8 button, down;
-	Sint32 x, y;
-	Sint32 xrel, yrel;
-	Sint32 wheel;
+	int8_t button, down;
+	int32_t x, y;
+	int32_t xrel, yrel;
+	int32_t wheel;
 
-	Event(Sint8 button = 0, Sint8 down = 0, Sint32 x = 0, Sint32 y = 0, Sint32 xrel = 0, Sint32 yrel = 0, Sint32 wheel = 0)
+	Event(int8_t button = 0, int8_t down = 0, int32_t x = 0, int32_t y = 0, int32_t xrel = 0, int32_t yrel = 0, int32_t wheel = 0)
 		: button(button), down(down), x(x), y(y), xrel(xrel), yrel(yrel), wheel(wheel)
 	{ }
 };
@@ -61,32 +37,38 @@ struct Event
 static Event event_current = {};
 static std::queue<Event> event_queue;
 
-void pushEvent(const SDL_Event &e)
+// The contract the console implementations share (see pc/lwjgl/Mouse.h):
+// incoming coordinates are top-left origin with top-left-relative deltas, and
+// the stored event is bottom-left origin with bottom-left-relative deltas, so
+// the public accessors hand them back LWJGL-style without flipping there.
+void pushMotion(int x, int y, int xrel, int yrel)
 {
-	switch (e.type)
-	{
-		case SDL_MOUSEMOTION:
-			staging_dx += e.motion.xrel;
-			staging_dy -= e.motion.yrel;
-			event_queue.emplace(-1, 0, e.motion.x, Display::getHeight() - e.motion.y - 1, e.motion.xrel, -e.motion.yrel, 0);
-			break;
-		case SDL_MOUSEWHEEL:
-			event_queue.emplace(-1, 0, e.wheel.mouseX, Display::getHeight() - e.wheel.mouseY - 1, 0, 0, e.wheel.y);
-			break;
-		case SDL_MOUSEBUTTONDOWN:
-			event_queue.emplace(buttonSDLToLWJGL(e.button.button), 1, e.button.x, Display::getHeight() - e.button.y - 1, 0, 0, 0);
-			break;
-		case SDL_MOUSEBUTTONUP:
-			event_queue.emplace(buttonSDLToLWJGL(e.button.button), 0, e.button.x, Display::getHeight() - e.button.y - 1, 0, 0, 0);
-			break;
-	}
+	staging_dx += xrel;
+	staging_dy -= yrel;
+	event_queue.emplace(-1, 0, x, Display::getHeight() - y - 1, xrel, -yrel, 0);
+}
+
+void pushButton(int button, bool down, int x, int y)
+{
+	// GLFW already numbers the first buttons left/right/middle, which is the
+	// LWJGL order (SDL needed the left/right/middle -> 0/1/2 swap).
+	event_queue.emplace(static_cast<int8_t>(button), down ? 1 : 0, x, Display::getHeight() - y - 1, 0, 0, 0);
+}
+
+void pushWheel(int delta, int x, int y)
+{
+	// Accumulate like the console implementations do — the SDL-era desktop
+	// never touched staging_dz here, so Mouse::getDWheel() was dead zero.
+	staging_dz += delta;
+	event_queue.emplace(-1, 0, x, Display::getHeight() - y - 1, 0, 0, delta);
 }
 
 }
 
 void setCursorPosition(int_t x, int_t y)
 {
-	SDL_WarpMouseInWindow(GLContext::detail::getWindow(), x, y);
+	// LWJGL coordinates are bottom-left; GLFW's cursor API is top-left.
+	glfwSetCursorPos(GLContext::detail::getWindow(), x, Display::getHeight() - y - 1);
 }
 
 // Event handling
@@ -112,6 +94,7 @@ int_t getEventDX()
 {
 	return detail::event_current.xrel;
 }
+
 int_t getEventDY()
 {
 	return detail::event_current.yrel;
@@ -121,6 +104,7 @@ int_t getEventX()
 {
 	return detail::event_current.x;
 }
+
 int_t getEventY()
 {
 	return detail::event_current.y;
@@ -134,16 +118,16 @@ int_t getEventDWheel()
 // State
 int_t getX()
 {
-	int x;
-	SDL_GetMouseState(&x, nullptr);
-	return x;
+	double x = 0.0;
+	glfwGetCursorPos(GLContext::detail::getWindow(), &x, nullptr);
+	return (int_t)x;
 }
 
 int_t getY()
 {
-	int y;
-	SDL_GetMouseState(nullptr, &y);
-	return lwjgl::Display::getHeight() - y - 1;
+	double y = 0.0;
+	glfwGetCursorPos(GLContext::detail::getWindow(), nullptr, &y);
+	return lwjgl::Display::getHeight() - (int_t)y - 1;
 }
 
 int_t getDX()
@@ -173,36 +157,36 @@ void clearDeltas()
 	staging_dy = 0;
 	staging_dz = 0;
 
-	// SDL may generate relative motion when switching to relative mode or
-	// warping the cursor. Drain SDL's own relative accumulator too.
-	int dx = 0, dy = 0;
-	SDL_GetRelativeMouseState(&dx, &dy);
+	// The GLFW bridge derives relative motion from the last reported cursor
+	// position; dropping that origin prevents the next motion event after a
+	// warp from carrying a bogus camera delta.
+	lwjgl::detail::resetGlfwMouseOrigin();
 }
 
 bool isButtonDown(int_t button)
 {
-	Uint8 sdlButton = buttonLWJGLToSDL(button);
-	return sdlButton != 0 && (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(sdlButton)) != 0;
+	if (button < 0 || button > GLFW_MOUSE_BUTTON_LAST)
+		return false;
+	return glfwGetMouseButton(GLContext::detail::getWindow(), static_cast<int>(button)) == GLFW_PRESS;
 }
 
 bool isGrabbed()
 {
-	return SDL_GetRelativeMouseMode() == SDL_TRUE;
-	// return SDL_GetWindowFlags(GLContext::detail::getWindow()) & SDL_WINDOW_MOUSE_CAPTURE;
-	// return SDL_GetWindowGrab(GLContext::detail::getWindow()) == SDL_TRUE;
+	return grabbed;
 }
 
-void setGrabbed(bool grabbed)
+void setGrabbed(bool state)
 {
+	grabbed = state;
+
 	staging_dx = 0;
 	staging_dy = 0;
 
-	if (SDL_ShowCursor(grabbed ? SDL_DISABLE : SDL_ENABLE) < 0)
-		throw SDLException();
-	SDL_SetRelativeMouseMode(grabbed ? SDL_TRUE : SDL_FALSE);
+	GLFWwindow *window = GLContext::detail::getWindow();
+	glfwSetInputMode(window, GLFW_CURSOR, grabbed ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+	if (glfwRawMouseMotionSupported())
+		glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, grabbed ? GLFW_TRUE : GLFW_FALSE);
 	clearDeltas();
-	// SDL_CaptureMouse(grabbed ? SDL_TRUE : SDL_FALSE);
-	// SDL_SetWindowMouseGrab(GLContext::detail::getWindow(), grabbed ? SDL_TRUE : SDL_FALSE);
 }
 
 }

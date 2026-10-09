@@ -4,7 +4,7 @@
 #include <set>
 
 #if !defined(PS2_PLATFORM) && !defined(WII_PLATFORM) && !defined(CTR_PLATFORM)
-#include "SDL.h"
+#include <GLFW/glfw3.h>
 #include "glad/glad.h"
 #endif
 
@@ -36,9 +36,10 @@ public:
 };
 
 // Context singletons (desktop only; consoles own the framebuffer directly).
+// GLFW folds the context into the window, so there is no separate context
+// handle to hand out the way SDL_GLContext did.
 #if !defined(PS2_PLATFORM) && !defined(WII_PLATFORM) && !defined(CTR_PLATFORM)
-SDL_Window *getWindow();
-SDL_GLContext getGLContext();
+GLFWwindow *getWindow();
 #endif
 
 }

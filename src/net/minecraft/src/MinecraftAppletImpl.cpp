@@ -21,5 +21,6 @@ void MinecraftAppletImpl::displayUnexpectedThrowable(UnexpectedThrowable *unexpe
     MC_LOG_ERROR("crash", "%s\n", report.getText().c_str());
     // In the AWT build, mainFrame.removeAll() + setLayout(BorderLayout) +
     // mainFrame.add(PanelCrashReport, "Center") + mainFrame.validate() would
-    // inject the crash UI into the applet.  In SDL2 we write to stderr.
+    // inject the crash UI into the applet.  In the C++ port we write to the
+    // log (and CrashHandler::Crash shows it).
 }

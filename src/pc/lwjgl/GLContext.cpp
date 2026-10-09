@@ -5,14 +5,15 @@
 #include <stdexcept>
 #include <csignal>
 
-#include "external/SDLException.h"
+#include "external/GlfwException.h"
+#include "pc/lwjgl/GlfwEvents.h"
 #include "platform/RenderAPI.h"
 #include "pc/render/PcRenderBackend.h"
 #if defined(MC_WIN32)
 #include "pc/render/d3d9/PcD3D9Context.h"
 #endif
 
-#include "SDL.h"
+#include <GLFW/glfw3.h>
 
 // #define MC_DEBUG_GL
 
@@ -144,9 +145,20 @@ namespace detail
 class GLContext
 {
 private:
-	SDL_Window *window = nullptr;
-	SDL_GLContext gl_context = nullptr;
-	GLCapabilities capabilties;
+	GLFWwindow *window = nullptr;
+	GLCapabilities capabilities;
+
+	void centerWindow()
+	{
+		// What SDL_WINDOWPOS_CENTERED used to do; GLFW places new windows
+		// wherever the OS feels like.
+		GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+		const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+		int monitor_x = 0, monitor_y = 0;
+		glfwGetMonitorPos(monitor, &monitor_x, &monitor_y);
+		glfwSetWindowPos(window, monitor_x + (mode->width - 854) / 2,
+		                monitor_y + (mode->height - 480) / 2);
+	}
 
 public:
 	GLContext()
@@ -154,19 +166,26 @@ public:
 #if defined(MC_WIN32)
 		if (pcRenderBackendGetRequested() == PcRenderBackendType::Direct3D9)
 		{
-			window = SDL_CreateWindow("OptiCraft", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-			                          854, 480, SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE);
+			// No OpenGL context at all for the D3D9 backend — just a plain
+			// native window whose HWND pcD3D9Initialize digs out.
+			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+			glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+			glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+
+			window = glfwCreateWindow(854, 480, "OptiCraft", nullptr, nullptr);
 			if (window != nullptr && pcD3D9Initialize(window, requestedSamples))
 			{
 				requestedSamples = pcD3D9GetSamples();
 				pcRenderBackendSetActive(PcRenderBackendType::Direct3D9);
+				lwjgl::detail::installGlfwEventCallbacks(window);
+				centerWindow();
 				return;
 			}
 
 			pcD3D9Shutdown();
 			if (window != nullptr)
 			{
-				SDL_DestroyWindow(window);
+				glfwDestroyWindow(window);
 				window = nullptr;
 			}
 		}
@@ -174,60 +193,37 @@ public:
 
 		pcRenderBackendSetActive(PcRenderBackendType::OpenGL);
 
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 1);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-		SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-		SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+		// Fixed-function renderer: 1.3 is the realistic floor (multisampled
+		// pixel formats and the GL_SAMPLES/GL_SAMPLE_BUFFERS queries need
+		// ARB_multisample-era core), and effectively what the old SDL 1.1
+		// request produced in practice.
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 1);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+		glfwWindowHint(GLFW_DEPTH_BITS, 24);
+		glfwWindowHint(GLFW_DOUBLEBUFFER, GLFW_TRUE);
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+		// GLFW degrades the sample count itself when the requested one is
+		// not available (it retries its pixel-format search without the
+		// "soft" attributes), so the old manual fallback ladder is gone;
+		// renderGetMaxSamples() reads back what was actually created.
+		glfwWindowHint(GLFW_SAMPLES, requestedSamples);
 
 #ifdef MC_DEBUG_GL
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
+		glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
 #endif
 
-		const int sampleCandidates[] = {requestedSamples, 8, 4, 2, 0};
-		int previousSample = -1;
-		for (int sample : sampleCandidates)
-		{
-			if (sample > requestedSamples || sample == previousSample)
-				continue;
-			previousSample = sample;
+		window = glfwCreateWindow(854, 480, "OptiCraft", nullptr, nullptr);
+		if (window == nullptr)
+			throw GlfwException();
 
-			SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, sample > 0 ? 1 : 0);
-			SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, sample);
+		glfwMakeContextCurrent(window);
 
-			window = SDL_CreateWindow("OptiCraft", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-			                          854, 480, SDL_WINDOW_HIDDEN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-			if (window == nullptr)
-				continue;
-
-			gl_context = SDL_GL_CreateContext(window);
-			if (gl_context == nullptr)
-			{
-				SDL_DestroyWindow(window);
-				window = nullptr;
-				continue;
-			}
-
-			if (SDL_GL_MakeCurrent(window, gl_context) != 0)
-			{
-				SDL_GL_DeleteContext(gl_context);
-				gl_context = nullptr;
-				SDL_DestroyWindow(window);
-				window = nullptr;
-				continue;
-			}
-
-			requestedSamples = sample;
-			break;
-		}
-
-		if (window == nullptr || gl_context == nullptr)
-			throw SDLException();
-
-		if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(SDL_GL_GetProcAddress)))
+		if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
 			throw std::runtime_error("Failed to load glad");
 
-		SDL_GL_SetSwapInterval(0);
+		glfwSwapInterval(0);
 
 		const GLubyte *extensions = renderGetString(RenderStringQuery::Extensions);
 		if (extensions != nullptr)
@@ -240,7 +236,7 @@ public:
 				{
 					if (!cap.empty())
 					{
-						capabilties.add(cap);
+						capabilities.add(cap);
 						cap.clear();
 					}
 					while (*extension_p == ' ')
@@ -251,8 +247,11 @@ public:
 				cap.push_back(*extension_p++);
 			}
 			if (!cap.empty())
-				capabilties.add(cap);
+				capabilities.add(cap);
 		}
+
+		lwjgl::detail::installGlfwEventCallbacks(window);
+		centerWindow();
 
 #ifdef MC_DEBUG_GL
 		glEnable(GL_DEBUG_OUTPUT);
@@ -267,15 +266,15 @@ public:
 		if (pcRenderBackendIsDirect3D9())
 			pcD3D9Shutdown();
 #endif
-		if (gl_context != nullptr)
-			SDL_GL_DeleteContext(gl_context);
 		if (window != nullptr)
-			SDL_DestroyWindow(window);
+			glfwDestroyWindow(window);
+		// glfwTerminate is deliberately not called: the OS reclaims everything
+		// at process exit and the static destructor ordering is not worth
+		// betting the shutdown path on (SDL_Quit was never called either).
 	}
 
-	SDL_Window *getWindow() const { return window; }
-	SDL_GLContext getGLContext() const { return gl_context; }
-	const GLCapabilities &getCapabilities() const { return capabilties; }
+	GLFWwindow *getWindow() const { return window; }
+	const GLCapabilities &getCapabilities() const { return capabilities; }
 };
 
 // Context singletons
@@ -285,13 +284,9 @@ static GLContext &getContext()
 	return context;
 }
 
-SDL_Window *getWindow()
+GLFWwindow *getWindow()
 {
 	return getContext().getWindow();
-}
-SDL_GLContext getGLContext()
-{
-	return getContext().getGLContext();
 }
 
 }
@@ -312,8 +307,7 @@ void instantiate()
 	detail::getContext();
 	if (pcRenderBackendIsDirect3D9())
 		return;
-	if (SDL_GL_MakeCurrent(detail::getContext().getWindow(), detail::getContext().getGLContext()))
-		throw SDLException();
+	glfwMakeContextCurrent(detail::getWindow());
 }
 
 const detail::GLCapabilities &getCapabilities()

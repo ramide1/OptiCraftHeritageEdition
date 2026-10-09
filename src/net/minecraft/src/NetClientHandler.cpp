@@ -139,11 +139,12 @@
 #include "Packet201PlayerInfo.h"
 #include "Packet202PlayerAbilities.h"
 
+#include "MicrosoftAccount.h"
 #include "mods/ModManager.h"
 
 // Networking uses the platform socket implementation selected by NetworkManager.
 
-NetClientHandler::NetClientHandler(Minecraft* minecraft, const std::string& host, int port)
+NetClientHandler::NetClientHandler(Minecraft* minecraft, const std::string& host, int port, int protocolVersion)
 {
     disconnected = false;
     terrainDownloaded = false;
@@ -152,6 +153,7 @@ NetClientHandler::NetClientHandler(Minecraft* minecraft, const std::string& host
     
     mc = minecraft;
     serverHostname = host;
+    loginProtocolVersion = protocolVersion;
     
     try
     {
@@ -1026,7 +1028,27 @@ void NetClientHandler::handleHandshake(Packet2Handshake* packet)
 
     if (packet->username == "-")
     {
-        addToSendQueue(new Packet1Login(mc->session->username, 29));
+        addToSendQueue(new Packet1Login(mc->session->username, loginProtocolVersion));
+        return;
+    }
+
+    // Online mode with a signed-in Microsoft account: register the server
+    // hash with the modern session server (the client half of online mode
+    // that every Java version speaks today) before the login packet.
+    // Blocking like the legacy readUrl below, since this handler owns the
+    // network thread. Without an account, the dead legacy path remains --
+    // those servers must run offline mode or front their own auth proxy
+    // (Betacraft's, SimpleOnlineModeFix, ...) either way.
+    if (MicrosoftAccounts::hasAccount())
+    {
+        std::string authError;
+        if (MicrosoftAccounts::ensureFreshToken(authError) &&
+            MicrosoftAccounts::joinServer(packet->username, authError))
+        {
+            addToSendQueue(new Packet1Login(mc->session->username, loginProtocolVersion));
+            return;
+        }
+        netManager->networkShutdown("disconnect.loginFailedInfo", {authError});
         return;
     }
 
@@ -1051,7 +1073,7 @@ void NetClientHandler::handleHandshake(Packet2Handshake* packet)
             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
         if (responseLower == "ok")
-            addToSendQueue(new Packet1Login(mc->session->username, 29));
+            addToSendQueue(new Packet1Login(mc->session->username, loginProtocolVersion));
         else
             netManager->networkShutdown("disconnect.loginFailedInfo", {response});
     }

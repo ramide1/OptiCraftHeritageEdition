@@ -772,7 +772,7 @@ void GuiMainMenu::drawTitleArt(int_t mouseX, int_t mouseY, float_t partialTick)
         tess->draw();
         renderEnable(RenderCapability::Texture2D);
 
-        const std::string letter = "A";
+        const std::string letter = uiText("A");
         fontRenderer->drawStringWithShadow(letter,
             static_cast<int_t>(glyphCenterX) - fontRenderer->getStringWidth(letter) / 2,
             rowY, 0xf0f0f0);

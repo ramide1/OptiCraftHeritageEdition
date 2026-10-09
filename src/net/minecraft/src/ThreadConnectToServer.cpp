@@ -18,10 +18,12 @@
 #include "Session.h"
 #include "java/String.h"
 
-ThreadConnectToServer::ThreadConnectToServer(GuiConnecting *guiconnecting, Minecraft *minecraft, const std::string &s, int_t i)
+ThreadConnectToServer::ThreadConnectToServer(GuiConnecting *guiconnecting, Minecraft *minecraft, const std::string &s, int_t i,
+                                             int_t protocolVersion)
 	: mc(minecraft)
 	, hostName(s)
 	, port(i)
+	, loginProtocolVersion(protocolVersion)
 {
 	(void)guiconnecting;
 }
@@ -103,7 +105,7 @@ void ThreadConnectToServer::run()
 			}
 		}
 #endif
-		NetClientHandler *handler = new NetClientHandler(mc, hostName, port);
+		NetClientHandler *handler = new NetClientHandler(mc, hostName, port, loginProtocolVersion);
 		if (cancelled.load())
 		{
 			handler->disconnect();

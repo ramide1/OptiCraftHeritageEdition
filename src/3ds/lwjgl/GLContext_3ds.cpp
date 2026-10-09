@@ -1,7 +1,7 @@
 // Display companion for the 3DS: the console half of lwjgl::GLContext.
 // Mirrors src/wii/lwjgl/GLContext_wii.cpp -- on CTR_PLATFORM the header does
-// not declare the SDL window/context singletons (they are PC-only behind the
-// guard in GLContext.h), so only the context functions below exist here.
+// not declare the GLFW window singleton (it is PC-only behind the guard in
+// GLContext.h), so only the context functions below exist here.
 //
 // instantiate() is a deliberate no-op: the citro3d context comes up with the
 // display instead (Display_3ds.cpp::create() calls ds::init(), the same shape

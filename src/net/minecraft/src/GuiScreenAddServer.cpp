@@ -3,13 +3,17 @@
 #include "GuiButton.h"
 #include "GuiTextField.h"
 #include "GuiTextFieldSelector.h"
+#include "ProtocolVersion.h"
 #include "ServerNBTStorage.h"
 #include "StringTranslate.h"
+#include "UiStrings.h"
 #include "java/String.h"
 #include "pc/lwjgl/Keyboard.h"
 
 GuiScreenAddServer::GuiScreenAddServer(GuiScreen *parent, ServerNBTStorage *server)
-    : parentGui(parent), serverAddress(nullptr), serverName(nullptr), buttonAdd(nullptr), serverNBTStorage(server)
+    : parentGui(parent), serverAddress(nullptr), serverName(nullptr), buttonAdd(nullptr),
+      buttonVersion(nullptr), serverNBTStorage(server),
+      selectedVersion(server != nullptr ? server->version : ProtocolVersions::kAutoVersion)
 {
 }
 
@@ -50,6 +54,11 @@ void GuiScreenAddServer::initGui()
     // focus follows the screen instead of skipping directly to Add/Cancel.
     controlList.push_back(new GuiTextFieldSelector(10, width / 2 - 100, 76, 200, 20));
     controlList.push_back(new GuiTextFieldSelector(11, width / 2 - 100, 116, 200, 20));
+    // Sits between the address field and the action buttons so the pad
+    // focus order keeps matching the visual top-to-bottom order.
+    controlList.push_back(buttonVersion = new GuiButton(2, width / 2 - 100, height / 4 + 84,
+                                                        200, 20, ""));
+    updateVersionButtonLabel();
     controlList.push_back(buttonAdd = new GuiButton(0, width / 2 - 100, height / 4 + 108,
                                                     translate->translateKey("addServer.add")));
     controlList.push_back(new GuiButton(1, width / 2 - 100, height / 4 + 132,
@@ -82,12 +91,18 @@ void GuiScreenAddServer::actionPerformed(GuiButton *button)
     {
         if (parentGui != nullptr) parentGui->confirmClicked(false, 0);
     }
+    else if (button->id == 2)
+    {
+        cycleVersion();
+        updateVersionButtonLabel();
+    }
     else if (button->id == 0)
     {
         if (serverNBTStorage != nullptr)
         {
             serverNBTStorage->name = serverName != nullptr ? serverName->getText() : "";
             serverNBTStorage->host = serverAddress != nullptr ? serverAddress->getText() : "";
+            serverNBTStorage->version = selectedVersion;
         }
         if (parentGui != nullptr) parentGui->confirmClicked(true, 0);
     }
@@ -157,6 +172,40 @@ void GuiScreenAddServer::updateAddButtonState()
             valid = false;
     }
     buttonAdd->enabled = valid;
+}
+
+void GuiScreenAddServer::cycleVersion()
+{
+    // Auto -> next supported version -> ... -> wrap back to Auto. Registry
+    // entries the build cannot speak stay unselectable until the matching
+    // translation adapter exists (see ProtocolVersion.h).
+    const auto &versions = ProtocolVersions::all();
+    int_t next = ProtocolVersions::kAutoVersion;
+    bool takeNext = selectedVersion == ProtocolVersions::kAutoVersion;
+    for (std::size_t i = 0; i < versions.size(); i++)
+    {
+        const ProtocolVersionInfo &info = versions[i];
+        if (!info.supported)
+            continue;
+        if (takeNext)
+        {
+            next = info.protocolId;
+            break;
+        }
+        if (info.protocolId == selectedVersion)
+            takeNext = true;
+    }
+    selectedVersion = next;
+}
+
+void GuiScreenAddServer::updateVersionButtonLabel()
+{
+    if (buttonVersion == nullptr)
+        return;
+    const std::string versionName = selectedVersion == ProtocolVersions::kAutoVersion
+                                        ? uiText("Auto")
+                                        : ProtocolVersions::displayName(selectedVersion);
+    buttonVersion->displayString = uiText("Version") + ": " + versionName;
 }
 
 void GuiScreenAddServer::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)

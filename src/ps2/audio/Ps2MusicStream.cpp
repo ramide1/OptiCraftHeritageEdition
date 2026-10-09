@@ -2,7 +2,7 @@
 
 #include "ps2/audio/Ps2MusicStream.h"
 
-#include "ps2/audio/Ps2AdpcmStreamDecoder.h"
+#include "platform/audio/Ps2AdpcmStreamDecoder.h"
 #include "ps2/audio/Ps2StreamFile.h"
 #include "ps2/system/Ps2ThreadPriority.h"
 #include "platform/Log.h"
@@ -28,7 +28,7 @@ constexpr int kAudsrvWriteBytes = 2048;
 // ~46 ms at 22 kHz mono and every ~11 ms at 48 kHz stereo.
 constexpr int kRingPollDelayUs = 4000;
 constexpr int kRawPcmSampleRate = 22050;
-constexpr int kRawPcmChannels = 2;
+constexpr int kRawPcmChannels = 1;
 constexpr int kThreadPriority = Ps2ThreadPriority::kMusicStream;
 constexpr int kThreadStackBytes = 32 * 1024;
 

@@ -96,11 +96,13 @@ class ChunkCoordinates;
 class GuiPlayerInfo;
 
 #include "NetHandler.h"
+#include "ProtocolVersion.h"
 
 class NetClientHandler : public NetHandler
 {
 public:
-    NetClientHandler(Minecraft* minecraft, const std::string& host, int port);
+    NetClientHandler(Minecraft* minecraft, const std::string& host, int port,
+                     int protocolVersion = ProtocolVersions::kNativeVersion);
     ~NetClientHandler();
 
     void processReadPackets();
@@ -245,6 +247,10 @@ private:
     bool playerControllerOwnsHandler = false;
     NetworkManager* netManager;
     std::string serverHostname;  // field_1209_a
+    // Wire protocol advertised in Packet1Login; selected per server in the
+    // multiplayer UI (ProtocolVersions::resolveSupported guarantees a value
+    // this build can actually speak).
+    int loginProtocolVersion = ProtocolVersions::kNativeVersion;
     Minecraft* mc;
     WorldClient* worldClient = nullptr;
     bool terrainDownloaded;      // field_1210_g - true cuando se ha descargado el terreno inicial

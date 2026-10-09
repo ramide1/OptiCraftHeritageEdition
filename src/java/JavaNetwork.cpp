@@ -23,15 +23,34 @@ bool postUrl(const std::string &, const std::string &, const std::string &,
 
 #else
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <streambuf>
+#include <string>
 
-#include <SDL_net.h>
+#ifdef _WIN32
+// Winsock first: windows.h (pulled by game headers) must never come before
+// it, or the older winsock.h shadows these declarations.
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
+#endif
 
 namespace JavaNetwork
 {
@@ -39,134 +58,422 @@ namespace JavaNetwork
 namespace
 {
 
-// SDL_net needs a one-time init before any socket call. SDL itself is already
-// initialised by main(); SDLNet_Init() only sets up the networking subsystem.
-void ensureNetInit()
+// Native desktop sockets (Winsock on Windows, BSD sockets elsewhere): the
+// Wii, 3DS and PS2 backends all ride their own stacks, so the desktop was
+// the only SDL_net user left -- and SDL_net v2 exposed no socket options,
+// which is why desktop multiplayer never got the TCP_NODELAY every console
+// backend sets. Shape follows JavaNetwork_3ds.cpp: atomic-fd lifecycle,
+// non-blocking sockets, select-sliced waits, single write mutex.
+//
+// No dependency, no init beyond Winsock's own (refcounted once, never torn
+// down -- process exit reclaims it, the way SDL_Quit was never called).
+
+#ifdef _WIN32
+using NativeHandle = SOCKET;
+constexpr NativeHandle kInvalidHandle = INVALID_SOCKET;
+constexpr int kShutdownBoth = SD_BOTH;
+#else
+using NativeHandle = int;
+constexpr NativeHandle kInvalidHandle = -1;
+constexpr int kShutdownBoth = SHUT_RDWR;
+#endif
+
+// Handshake budget. DNS runs uncapped on the calling thread (connect and
+// server-list threads only -- the old blocking resolver did the same),
+// while the TCP handshake below is bounded so a filtered host fails fast
+// instead of parking the thread in the kernel's SYN-retry window.
+constexpr int kConnectTimeoutSeconds = 10;
+constexpr int kReadSliceMs = 100;      // matches the old CheckSockets cadence
+constexpr int kWriteStallBudgetMs = 10000; // 3DS parity: no-progress cap
+
+constexpr int kSendFlags =
+#if defined(__linux__)
+    MSG_NOSIGNAL; // a write to a peer-closed socket reports EPIPE instead of killing the process
+#else
+    0;
+#endif
+
+#ifdef _WIN32
+void ensureWSAInit()
 {
     static std::once_flag flag;
-    static bool ok = false;
     std::call_once(flag, []()
     {
-        ok = SDLNet_Init() == 0;
-        if (!ok)
-            MC_LOG_ERROR("network", "SDLNet_Init failed: %s\n", SDLNet_GetError());
+        WSADATA data{};
+        if (::WSAStartup(MAKEWORD(2, 2), &data) != 0)
+            MC_LOG_ERROR("network", "WSAStartup failed: %d\n", ::WSAGetLastError());
     });
 }
+#endif
 
-// Opens a blocking client TCP connection. Returns nullptr on failure.
-TCPsocket openConnection(const std::string &host, int port)
+void closeHandle(NativeHandle handle)
 {
-    ensureNetInit();
-    IPaddress address;
-    if (SDLNet_ResolveHost(&address, host.c_str(), static_cast<Uint16>(port)) != 0)
-        return nullptr;
-    return SDLNet_TCP_Open(&address);
+#ifdef _WIN32
+    ::closesocket(handle);
+#else
+    ::close(handle);
+#endif
 }
 
-class SdlNetSocket : public Socket
+bool setNonBlocking(NativeHandle handle)
+{
+#ifdef _WIN32
+    u_long mode = 1;
+    return ::ioctlsocket(handle, FIONBIO, &mode) == 0;
+#else
+    const int flags = ::fcntl(handle, F_GETFL, 0);
+    return flags >= 0 && ::fcntl(handle, F_SETFL, flags | O_NONBLOCK) == 0;
+#endif
+}
+
+bool lastErrorWouldBlock()
+{
+#ifdef _WIN32
+    return ::WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+int rawSend(NativeHandle handle, const char *data, int length)
+{
+#ifdef _WIN32
+    return ::send(handle, data, length, kSendFlags);
+#else
+    return static_cast<int>(::send(handle, data, static_cast<std::size_t>(length), kSendFlags));
+#endif
+}
+
+int rawRecv(NativeHandle handle, char *data, int length)
+{
+#ifdef _WIN32
+    return ::recv(handle, data, length, 0);
+#else
+    return static_cast<int>(::recv(handle, data, static_cast<std::size_t>(length), 0));
+#endif
+}
+
+// select() for writability (write=true) or readability. A null timeout
+// waits indefinitely, mirroring the old blocking-socket shape.
+int waitSocket(NativeHandle handle, bool write, const struct timeval *timeout)
+{
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(handle, &set);
+#ifdef _WIN32
+    if (write)
+        return ::select(0, nullptr, &set, nullptr, timeout);
+    return ::select(0, &set, nullptr, nullptr, timeout);
+#else
+    if (write)
+        return ::select(handle + 1, nullptr, &set, nullptr, timeout);
+    return ::select(handle + 1, &set, nullptr, nullptr, timeout);
+#endif
+}
+
+bool sendAllNative(NativeHandle handle, const char *data, int length)
+{
+    int offset = 0;
+    while (offset < length)
+    {
+        const int count = rawSend(handle, data + offset, length - offset);
+        if (count > 0)
+        {
+            offset += count;
+            continue;
+        }
+        if (count < 0 && !lastErrorWouldBlock())
+            return false;
+        if (waitSocket(handle, true, nullptr) <= 0)
+            return false;
+    }
+    return true;
+}
+
+void applySocketOptions(NativeHandle handle)
+{
+    // Player packets are small and latency-sensitive: disable Nagle so the
+    // stack does not deliberately hold them waiting for a coalescing
+    // partner, same as the Wii/3DS/PS2 backends. Non-fatal.
+    const int noDelay = 1;
+    (void)::setsockopt(handle, IPPROTO_TCP, TCP_NODELAY,
+#ifdef _WIN32
+        reinterpret_cast<const char *>(&noDelay),
+#else
+        &noDelay,
+#endif
+        sizeof(noDelay));
+#if defined(__APPLE__)
+    const int noSigPipe = 1;
+    (void)::setsockopt(handle, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
+#endif
+}
+
+// Opens a client TCP connection (IPv4, like the old SDL_net path).
+// Returns kInvalidHandle on failure.
+NativeHandle openNativeConnection(const std::string &host, int port)
+{
+#ifdef _WIN32
+    ensureWSAInit();
+#endif
+    if (host.empty() || port < 1 || port > 65535)
+        return kInvalidHandle;
+
+    sockaddr_in target{};
+    target.sin_family = AF_INET;
+    target.sin_port = htons(static_cast<unsigned short>(port));
+
+    // Literal IPs first: no resolver round-trip for the common raw-address case.
+    if (::inet_pton(AF_INET, host.c_str(), &target.sin_addr) != 1)
+    {
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo *resolvedHead = nullptr;
+        if (::getaddrinfo(host.c_str(), nullptr, &hints, &resolvedHead) != 0 ||
+            resolvedHead == nullptr)
+        {
+            if (resolvedHead != nullptr)
+                ::freeaddrinfo(resolvedHead);
+            return kInvalidHandle;
+        }
+        bool resolvedOk = false;
+        for (addrinfo *entry = resolvedHead; entry != nullptr; entry = entry->ai_next)
+        {
+            if (entry->ai_family == AF_INET && entry->ai_addr != nullptr)
+            {
+                std::memcpy(&target.sin_addr,
+                    &reinterpret_cast<sockaddr_in *>(entry->ai_addr)->sin_addr,
+                    sizeof(target.sin_addr));
+                resolvedOk = true;
+                break;
+            }
+        }
+        ::freeaddrinfo(resolvedHead);
+        if (!resolvedOk)
+            return kInvalidHandle;
+    }
+
+#ifdef _WIN32
+    const NativeHandle handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (handle == kInvalidHandle)
+        return kInvalidHandle;
+#else
+    const int rawFd = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (rawFd < 0)
+        return kInvalidHandle;
+    const NativeHandle handle = rawFd;
+#endif
+
+    applySocketOptions(handle);
+    if (!setNonBlocking(handle))
+    {
+        closeHandle(handle);
+        return kInvalidHandle;
+    }
+
+    if (::connect(handle, reinterpret_cast<sockaddr *>(&target), sizeof(target)) == 0)
+        return handle; // localhost: already established
+
+#ifdef _WIN32
+    if (::WSAGetLastError() != WSAEWOULDBLOCK)
+#else
+    if (errno != EINPROGRESS)
+#endif
+    {
+        closeHandle(handle);
+        return kInvalidHandle;
+    }
+
+    // Bounded handshake in short slices (the 3DS shape): a failing connect
+    // may never flag writability, so one long select would burn the whole
+    // budget without answering. Completion is probed the standard way --
+    // SO_ERROR through getsockopt -- which desktop stacks answer properly.
+    const auto start = std::chrono::steady_clock::now();
+    const auto budget = std::chrono::seconds(kConnectTimeoutSeconds);
+    for (;;)
+    {
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        if (elapsed >= budget)
+            break;
+        const auto remaining =
+            std::chrono::duration_cast<std::chrono::milliseconds>(budget - elapsed);
+        const auto slice = std::min(remaining, std::chrono::milliseconds(kReadSliceMs));
+        struct timeval tv{};
+        tv.tv_sec = 0;
+        tv.tv_usec = static_cast<long>(slice.count()) * 1000L;
+
+        const int ready = waitSocket(handle, true, &tv);
+        if (ready < 0)
+        {
+            closeHandle(handle);
+            return kInvalidHandle;
+        }
+        if (ready == 0)
+            continue;
+        int socketError = 0;
+        bool probeOk = true;
+#ifdef _WIN32
+        int errorLen = sizeof(socketError);
+        if (::getsockopt(handle, SOL_SOCKET, SO_ERROR,
+                reinterpret_cast<char *>(&socketError), &errorLen) != 0)
+            probeOk = false;
+#else
+        socklen_t errorLen = sizeof(socketError);
+        if (::getsockopt(handle, SOL_SOCKET, SO_ERROR, &socketError, &errorLen) != 0)
+            probeOk = false;
+#endif
+        if (!probeOk || socketError != 0)
+        {
+            closeHandle(handle);
+            return kInvalidHandle;
+        }
+        return handle;
+    }
+    closeHandle(handle);
+    return kInvalidHandle;
+}
+
+class PcNativeSocket final : public Socket
 {
 public:
-    ~SdlNetSocket() override
-    {
-        releaseSocket();
-    }
+    ~PcNativeSocket() override { releaseSocket(); }
 
     bool connect(const std::string &host, int port) override
     {
         releaseSocket();
-
-        std::lock_guard<std::mutex> rGuard(socketReadLock);
-        std::lock_guard<std::mutex> wGuard(socketWriteLock);
-
         closing.store(false, std::memory_order_release);
         readInterrupted.store(false, std::memory_order_release);
+        receivedBytes.store(0, std::memory_order_relaxed);
+        sentBytes.store(0, std::memory_order_relaxed);
         remoteSocketAddress = host + ":" + std::to_string(port);
-        socket = openConnection(host, port);
-        if (socket == nullptr)
-            return false;
 
-        socketSet = SDLNet_AllocSocketSet(1);
-        if (socketSet == nullptr || SDLNet_TCP_AddSocket(socketSet, socket) < 0)
+        MC_LOG_INFO("network", "TCP connect: %s\n", remoteSocketAddress.c_str());
+        const NativeHandle handle = openNativeConnection(host, port);
+        if (handle == kInvalidHandle)
         {
-            if (socketSet != nullptr)
-            {
-                SDLNet_FreeSocketSet(socketSet);
-                socketSet = nullptr;
-            }
-            if (socket != nullptr)
-            {
-                SDLNet_TCP_Close(socket);
-                socket = nullptr;
-            }
+            MC_LOG_WARN("network", "TCP connect failed: %s\n", remoteSocketAddress.c_str());
+            releaseSocket();
             return false;
         }
-        socketInSet = true;
+        fd.store(handle, std::memory_order_release);
+        MC_LOG_INFO("network", "TCP connected: %s\n", remoteSocketAddress.c_str());
         return true;
     }
 
     int read(char *buffer, int length) override
     {
-        if (socket == nullptr || socketSet == nullptr || buffer == nullptr || length <= 0)
+        NativeHandle socketFd = fd.load(std::memory_order_acquire);
+        if (socketFd == kInvalidHandle || buffer == nullptr || length <= 0 ||
+            closing.load(std::memory_order_acquire))
             return -1;
 
+        // Non-blocking sockets (see openNativeConnection): recv-first saves
+        // a select round-trip per packet when data is already queued --
+        // every packet during a map stream. The wait runs in slices so
+        // close()/interruptRead() from another thread take effect promptly;
+        // after each wait the fd is re-validated because close() may have
+        // retired (and a later connection recycled) the descriptor mid-sleep.
         while (!closing.load(std::memory_order_acquire) &&
                !readInterrupted.load(std::memory_order_acquire))
         {
-            // Cerrojo dedicado exclusivamente a la lectura. No bloquea escrituras concurrentes.
-            std::unique_lock<std::mutex> guard(socketReadLock);
-            if (closing.load(std::memory_order_acquire) ||
-                readInterrupted.load(std::memory_order_acquire) ||
-                socket == nullptr || socketSet == nullptr)
-                return -1;
+            const int count = rawRecv(socketFd, buffer, length);
+            if (count > 0)
+            {
+                receivedBytes.fetch_add(static_cast<std::size_t>(count),
+                    std::memory_order_relaxed);
+                return count;
+            }
+            if (count == 0)
+                return -1; // peer closed
+            if (!lastErrorWouldBlock())
+                return -1; // real read error
 
-            const int ready = SDLNet_CheckSockets(socketSet, 100);
+            struct timeval tv{};
+            tv.tv_sec = 0;
+            tv.tv_usec = static_cast<long>(kReadSliceMs) * 1000L;
+            const int ready = waitSocket(socketFd, false, &tv);
+            // Re-check after the wait: close() may have retired this
+            // descriptor while select() slept, and its number can already
+            // have been recycled by a later connection.
+            if (fd.load(std::memory_order_acquire) != socketFd ||
+                closing.load(std::memory_order_acquire) ||
+                readInterrupted.load(std::memory_order_acquire))
+                return -1;
             if (ready < 0)
                 return -1;
-            if (ready == 0)
-            {
-                // Libera el mutex al reintentar para no retener recursos si no hay paquetes
-                guard.unlock();
-                continue;
-            }
-
-            if (SDLNet_SocketReady(socket))
-            {
-                const int received = SDLNet_TCP_Recv(socket, buffer, length);
-                return (received > 0) ? received : -1;
-            }
+            // ready == 0 (slice elapsed) or readable: loop, and the
+            // non-blocking recv re-samples for real.
         }
         return -1;
     }
 
     bool write(const char *buffer, int length) override
     {
-        if (socket == nullptr || buffer == nullptr || closing.load(std::memory_order_acquire))
+        if (buffer == nullptr)
             return false;
         if (length <= 0)
             return true;
 
-        // Adquiere inmediatamente el canal de escritura sin esperar el timeout de CheckSockets
-        std::lock_guard<std::mutex> guard(socketWriteLock);
+        // Serialized like the 3DS backend: the write thread and any
+        // disconnect flush can both push bytes through this socket.
+        std::lock_guard<std::mutex> guard(writeLock);
         int offset = 0;
         while (offset < length)
         {
-            if (closing.load(std::memory_order_acquire) || socket == nullptr)
+            const NativeHandle socketFd = fd.load(std::memory_order_acquire);
+            if (socketFd == kInvalidHandle || closing.load(std::memory_order_acquire))
                 return false;
-            const int sent = SDLNet_TCP_Send(socket, buffer + offset, length - offset);
-            if (sent <= 0)
+
+            const int count = rawSend(socketFd, buffer + offset, length - offset);
+            if (count > 0)
+            {
+                sentBytes.fetch_add(static_cast<std::size_t>(count),
+                    std::memory_order_relaxed);
+                offset += count;
+                continue;
+            }
+            if (count < 0 && !lastErrorWouldBlock())
                 return false;
-            offset += sent;
+            // Kernel buffer full: wait for writability in slices -- close()
+            // takes effect within one slice, and a peer that stops draining
+            // for good surfaces as a failed write (a disconnect) instead of
+            // a wedged thread. The budget resets on progress only, so a
+            // healthy but slow peer is never cut off.
+            int waitedMs = 0;
+            while (!closing.load(std::memory_order_acquire))
+            {
+                struct timeval tv{};
+                tv.tv_sec = 0;
+                tv.tv_usec = static_cast<long>(kReadSliceMs) * 1000L;
+                const int ready = waitSocket(socketFd, true, &tv);
+                if (fd.load(std::memory_order_acquire) != socketFd ||
+                    closing.load(std::memory_order_acquire))
+                    return false;
+                if (ready < 0)
+                    return false;
+                if (ready > 0)
+                    break; // writable again -- retry the send
+
+                waitedMs += kReadSliceMs;
+                if (waitedMs >= kWriteStallBudgetMs)
+                    return false;
+            }
         }
         return true;
     }
 
     bool flush() override
     {
-        return socket != nullptr && !closing.load(std::memory_order_acquire);
+        return fd.load(std::memory_order_acquire) != kInvalidHandle &&
+               !closing.load(std::memory_order_acquire);
     }
 
     void interruptRead() override
     {
+        // Flag only: the select-sliced reader notices within one slice,
+        // and this avoids shutting down a descriptor another thread may be
+        // retiring concurrently.
         readInterrupted.store(true, std::memory_order_release);
     }
 
@@ -174,11 +481,22 @@ public:
     {
         closing.store(true, std::memory_order_release);
         readInterrupted.store(true, std::memory_order_release);
+        const NativeHandle socketFd = fd.exchange(kInvalidHandle, std::memory_order_acq_rel);
+        if (socketFd != kInvalidHandle)
+        {
+            ::shutdown(socketFd, kShutdownBoth);
+            closeHandle(socketFd);
+        }
     }
 
-    std::string getRemoteSocketAddress() const override
+    std::string getRemoteSocketAddress() const override { return remoteSocketAddress; }
+    std::size_t getReceivedByteCount() const override
     {
-        return remoteSocketAddress;
+        return receivedBytes.load(std::memory_order_relaxed);
+    }
+    std::size_t getSentByteCount() const override
+    {
+        return sentBytes.load(std::memory_order_relaxed);
     }
 
 private:
@@ -186,33 +504,20 @@ private:
     {
         closing.store(true, std::memory_order_release);
         readInterrupted.store(true, std::memory_order_release);
-
-        // Bloqueo sincronizado de ambos canales para liberación limpia y sin carreras
-        std::lock_guard<std::mutex> rGuard(socketReadLock);
-        std::lock_guard<std::mutex> wGuard(socketWriteLock);
-
-        if (socketSet != nullptr)
+        const NativeHandle socketFd = fd.exchange(kInvalidHandle, std::memory_order_acq_rel);
+        if (socketFd != kInvalidHandle)
         {
-            if (socketInSet && socket != nullptr)
-                SDLNet_TCP_DelSocket(socketSet, socket);
-            SDLNet_FreeSocketSet(socketSet);
-            socketSet = nullptr;
-            socketInSet = false;
-        }
-        if (socket != nullptr)
-        {
-            SDLNet_TCP_Close(socket);
-            socket = nullptr;
+            ::shutdown(socketFd, kShutdownBoth);
+            closeHandle(socketFd);
         }
     }
 
-    TCPsocket socket = nullptr;
-    SDLNet_SocketSet socketSet = nullptr;
-    bool socketInSet = false;
-    std::mutex socketReadLock;
-    std::mutex socketWriteLock;
-    std::atomic_bool closing{false};
+    std::atomic<NativeHandle> fd{kInvalidHandle};
+    std::atomic_bool closing{true};
     std::atomic_bool readInterrupted{false};
+    std::atomic<std::size_t> receivedBytes{0};
+    std::atomic<std::size_t> sentBytes{0};
+    std::mutex writeLock;
     std::string remoteSocketAddress;
 };
 
@@ -241,7 +546,14 @@ protected:
 
 private:
     Socket &socket;
-    char buffer[512];
+    // 8 KiB, not the 512 bytes this used to be: every underflow() is one
+    // select() + recv() syscall round-trip, and the istream-driven Packet
+    // reader asks in streambuf-sized gulps. A login burst or a map-chunk
+    // packet (tens of KiB) crossed 512 bytes in hundreds of round-trips --
+    // each with its own kernel context switch. Same change the 3DS backend
+    // carries for its IPC round-trips; the growth lives on the heap-held
+    // istream, not on any thread stack.
+    char buffer[8192];
 };
 
 class SocketOutputBuffer : public std::streambuf
@@ -344,7 +656,7 @@ private:
 
 std::unique_ptr<Socket> createSocket()
 {
-    return std::make_unique<SdlNetSocket>();
+    return std::make_unique<PcNativeSocket>();
 }
 
 std::unique_ptr<std::istream> createInputStream(Socket &socket)
@@ -360,9 +672,10 @@ std::unique_ptr<std::ostream> createOutputStream(Socket &socket)
 namespace
 {
 
-// Minimal HTTP/1.0 GET over SDL_net. Returns the HTTP status code (or -1 on a
-// connection/parse failure) and fills body with the response payload.
-// Only plain http:// is supported — SDL_net has no TLS, so https is rejected.
+// Minimal HTTP/1.0 GET over the native socket. Returns the HTTP status code
+// (or -1 on a connection/parse failure) and fills body with the response
+// payload. Only plain http:// is supported -- there is no TLS here, so
+// https is rejected.
 int httpGet(const std::string &url, std::vector<unsigned char> &body)
 {
     const std::string scheme = "http://";
@@ -383,8 +696,8 @@ int httpGet(const std::string &url, std::vector<unsigned char> &body)
         port = std::atoi(hostPort.c_str() + colon + 1);
     }
 
-    TCPsocket socket = openConnection(host, port);
-    if (socket == nullptr)
+    NativeHandle socket = openNativeConnection(host, port);
+    if (socket == kInvalidHandle)
         return -1;
 
     std::string request =
@@ -392,46 +705,40 @@ int httpGet(const std::string &url, std::vector<unsigned char> &body)
         "Host: " + host + "\r\n" +
         "User-Agent: Minecraft\r\n" +
         "Connection: close\r\n\r\n";
-    int requestOffset = 0;
-    while (requestOffset < static_cast<int>(request.size()))
+    if (sendAllNative(socket, request.data(), static_cast<int>(request.size())))
     {
-        const int sent = SDLNet_TCP_Send(
-            socket, request.data() + requestOffset, static_cast<int>(request.size()) - requestOffset);
-        if (sent <= 0)
+        std::string raw;
+        char chunk[2048];
+        for (;;)
         {
-            SDLNet_TCP_Close(socket);
-            return -1;
+            if (waitSocket(socket, false, nullptr) < 0)
+                break;
+            const int count = rawRecv(socket, chunk, sizeof(chunk));
+            if (count <= 0)
+                break;
+            raw.append(chunk, count);
         }
-        requestOffset += sent;
+
+        if (!raw.empty())
+        {
+            int status = -1;
+            std::string::size_type sp = raw.find(' ');
+            if (sp != std::string::npos)
+                status = std::atoi(raw.c_str() + sp + 1);
+
+            std::string::size_type headerEnd = raw.find("\r\n\r\n");
+            if (headerEnd != std::string::npos)
+            {
+                const char *bodyStart = raw.data() + headerEnd + 4;
+                std::size_t bodyLen = raw.size() - (headerEnd + 4);
+                body.assign(bodyStart, bodyStart + bodyLen);
+            }
+            closeHandle(socket);
+            return status;
+        }
     }
-
-    std::string raw;
-    char chunk[2048];
-    for (;;)
-    {
-        int count = SDLNet_TCP_Recv(socket, chunk, sizeof(chunk));
-        if (count <= 0)
-            break;
-        raw.append(chunk, count);
-    }
-    SDLNet_TCP_Close(socket);
-
-    if (raw.empty())
-        return -1;
-
-    int status = -1;
-    std::string::size_type sp = raw.find(' ');
-    if (sp != std::string::npos)
-        status = std::atoi(raw.c_str() + sp + 1);
-
-    std::string::size_type headerEnd = raw.find("\r\n\r\n");
-    if (headerEnd != std::string::npos)
-    {
-        const char *bodyStart = raw.data() + headerEnd + 4;
-        std::size_t bodyLen = raw.size() - (headerEnd + 4);
-        body.assign(bodyStart, bodyStart + bodyLen);
-    }
-    return status;
+    closeHandle(socket);
+    return -1;
 };
 
 int httpPost(const std::string &url, const std::string &contentType,
@@ -454,8 +761,8 @@ int httpPost(const std::string &url, const std::string &contentType,
         port = std::atoi(hostPort.c_str() + colon + 1);
     }
 
-    TCPsocket socket = openConnection(host, port);
-    if (socket == nullptr)
+    NativeHandle socket = openNativeConnection(host, port);
+    if (socket == kInvalidHandle)
         return -1;
 
     const std::string request =
@@ -467,45 +774,40 @@ int httpPost(const std::string &url, const std::string &contentType,
         "Content-Language: en-US\r\n" +
         "Connection: close\r\n\r\n" + body;
 
-    int offset = 0;
-    while (offset < (int)request.size())
+    if (sendAllNative(socket, request.data(), static_cast<int>(request.size())))
     {
-        const int sent = SDLNet_TCP_Send(socket, request.data() + offset,
-                                        (int)request.size() - offset);
-        if (sent <= 0)
+        std::string raw;
+        char chunk[2048];
+        for (;;)
         {
-            SDLNet_TCP_Close(socket);
-            return -1;
+            if (waitSocket(socket, false, nullptr) < 0)
+                break;
+            const int count = rawRecv(socket, chunk, sizeof(chunk));
+            if (count <= 0)
+                break;
+            raw.append(chunk, count);
         }
-        offset += sent;
-    }
 
-    std::string raw;
-    char chunk[2048];
-    for (;;)
-    {
-        const int count = SDLNet_TCP_Recv(socket, chunk, sizeof(chunk));
-        if (count <= 0)
-            break;
-        raw.append(chunk, count);
-    }
-    SDLNet_TCP_Close(socket);
-    if (raw.empty())
-        return -1;
+        if (!raw.empty())
+        {
+            int status = -1;
+            const std::string::size_type sp = raw.find(' ');
+            if (sp != std::string::npos)
+                status = std::atoi(raw.c_str() + sp + 1);
 
-    int status = -1;
-    const std::string::size_type sp = raw.find(' ');
-    if (sp != std::string::npos)
-        status = std::atoi(raw.c_str() + sp + 1);
-
-    const std::string::size_type headerEnd = raw.find("\r\n\r\n");
-    response.clear();
-    if (headerEnd != std::string::npos)
-    {
-        const char *begin = raw.data() + headerEnd + 4;
-        response.assign(begin, begin + (raw.size() - headerEnd - 4));
+            const std::string::size_type headerEnd = raw.find("\r\n\r\n");
+            response.clear();
+            if (headerEnd != std::string::npos)
+            {
+                const char *begin = raw.data() + headerEnd + 4;
+                response.assign(begin, begin + (raw.size() - headerEnd - 4));
+            }
+            closeHandle(socket);
+            return status;
+        }
     }
-    return status;
+    closeHandle(socket);
+    return -1;
 }
 
 }

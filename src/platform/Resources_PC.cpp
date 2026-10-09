@@ -4,17 +4,42 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <SDL2/SDL.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <vector>
+#else
+#include <system_error>
+#endif
 
 std::string PlatformResources::baseDir()
 {
-    char* base = SDL_GetBasePath();
-    if (base)
+    // The executable's own directory — what SDL_GetBasePath used to report.
+#if defined(_WIN32)
+    wchar_t buffer[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (length > 0 && length < MAX_PATH)
+        return std::filesystem::path(std::wstring(buffer, length)).parent_path().lexically_normal().string();
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    if (size > 0)
     {
-        std::string out(base);
-        SDL_free(base);
-        return std::filesystem::path(out).lexically_normal().string();
+        std::vector<char> buffer(size);
+        if (_NSGetExecutablePath(buffer.data(), &size) == 0)
+            return std::filesystem::path(buffer.data()).parent_path().lexically_normal().string();
     }
+#else
+    // /proc/self/exe is a symlink to the executable on Linux (and the BSDs
+    // that ship procfs, which covers every CI desktop target).
+    std::error_code ec;
+    const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec)
+        return exe.parent_path().lexically_normal().string();
+#endif
     return std::filesystem::current_path().string();
 }
 

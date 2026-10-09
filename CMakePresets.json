@@ -16,11 +16,7 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
-        "MC_LOG_LEVEL": "2",
-        "CMAKE_MAKE_PROGRAM": {
-          "type": "FILEPATH",
-          "value": "C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe"
-        }
+        "MC_LOG_LEVEL": "2"
       }
     },
     {
@@ -90,7 +86,6 @@
         "PLATFORM": "PS2",
         "PS2_ENABLE_SOUND": "ON",
         "PS2_ENABLE_VU1_TERRAIN": "ON",
-        "CMAKE_MAKE_PROGRAM": "${sourceDir}/ninja.exe",
         "CMAKE_TRY_COMPILE_TARGET_TYPE": "STATIC_LIBRARY",
         "MC_LOG_LEVEL": "0"
       }
@@ -117,8 +112,7 @@
         "PLATFORM": "WII",
         "WII_BRINGUP": "OFF",
         "WII_ENABLE_SOUND": "ON",
-        "WII_ENABLE_NETWORK": "ON",
-        "CMAKE_MAKE_PROGRAM": "${sourceDir}/ninja.exe"
+        "WII_ENABLE_NETWORK": "ON"
       }
     },
     {
@@ -154,7 +148,6 @@
         "3DS_BRINGUP": "OFF",
         "3DS_ENABLE_SOUND": "ON",
         "3DS_ENABLE_NETWORK": "ON",
-        "CMAKE_MAKE_PROGRAM": "${sourceDir}/ninja.exe",
         "CMAKE_TRY_COMPILE_TARGET_TYPE": "STATIC_LIBRARY",
         "MC_LOG_LEVEL": "0"
       }

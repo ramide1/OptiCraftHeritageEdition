@@ -10,14 +10,14 @@
 #include "Minecraft.h"
 #include <iostream>
 
-GuiConnecting::GuiConnecting(Minecraft *minecraft, const std::string &host, int_t port)
+GuiConnecting::GuiConnecting(Minecraft *minecraft, const std::string &host, int_t port, int_t protocolVersion)
 	: clientHandler(nullptr)
 	, connectThread(nullptr)
 	, cancelled(false)
 {
-	MC_LOG_INFO("network", "Connecting to %s, %d\n", host.c_str(), port);
+	MC_LOG_INFO("network", "Connecting to %s, %d (protocol %d)\n", host.c_str(), port, protocolVersion);
 	minecraft->changeWorld1(nullptr);
-	connectThread = new ThreadConnectToServer(this, minecraft, host, port);
+	connectThread = new ThreadConnectToServer(this, minecraft, host, port, protocolVersion);
 	connectThread->start();
 }
 

@@ -51,7 +51,11 @@ PanelCrashReport::PanelCrashReport(UnexpectedThrowable *unexpectedthrowable)
 #endif
 
     s2 << "VM: C++ (OptiCraft)\n";
-    s2 << "LWJGL: SDL2 (N/A)\n";
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
+    s2 << "LWJGL: platform port (N/A)\n";
+#else
+    s2 << "LWJGL: GLFW 3.5 (N/A)\n";
+#endif
 
     std::string glVendor;
     try

@@ -247,6 +247,49 @@ std::string StringTranslate::translateUi(const std::string &english)
         if (english == "Play World") return "Jugar";
         if (english == "Rename World") return "Renombrar";
         if (english == "Delete World") return "Eliminar";
+        if (english == "Version") return "Versión";
+        if (english == "Auto") return "Automática";
+        if (english == "Microsoft Account") return "Cuenta Microsoft";
+        if (english == "Account") return "Cuenta";
+        if (english == "Login") return "Iniciar sesión";
+        if (english == "Logout") return "Cerrar sesión";
+        if (english == "Retry") return "Reintentar";
+        if (english == "Logged in as") return "Sesión de";
+        if (english == "Login complete") return "Sesión iniciada";
+        if (english == "Contacting Microsoft") return "Contactando a Microsoft";
+        if (english == "Open this address on any device") return "Abrí esta dirección en otro dispositivo";
+        if (english == "and enter this code") return "e ingresá este código";
+        if (english == "Signing in to Xbox and Minecraft") return "Iniciando sesión en Xbox y Minecraft";
+        if (english == "Create New World") return "Crear Mundo";
+        if (english == "Select World") return "Seleccionar Mundo";
+        if (english == "Open World") return "Abrir Mundo";
+        if (english == "Game Mode") return "Modo Juego";
+        if (english == "Survival") return "Supervivencia";
+        if (english == "Hardcore") return "Extremo";
+        if (english == "Peaceful") return "Pacífico";
+        if (english == "Difficulty") return "Dificultad";
+        if (english == "More World Options") return "Más Opciones de Mundo";
+        if (english == "World Size") return "Tamaño de Mundo";
+        if (english == "World Type") return "Tipo de Mundo";
+        if (english == "Generate Structures") return "Generar Estructuras";
+        if (english == "Map Features") return "Características del Mapa";
+        if (english == "Map Type") return "Tipo de Mapa";
+        if (english == "View") return "Cámara";
+        if (english == "Press START Button") return "Presiona START";
+        if (english == "Initializing world") return "Iniciando mundo";
+        if (english == "Play Tutorial") return "Jugar Tutorial";
+        if (english == "ON") return "ACTIVADO";
+        if (english == "OFF") return "DESACTIVADO";
+        if (english == "Done") return "Hecho";
+        if (english == "Cancel") return "Cancelar";
+        if (english == "A") return "A";
+        if (english == "B") return "B";
+        if (english == "X") return "X";
+        if (english == "Y") return "Y";
+        if (english == "Select") return "Seleccionar";
+        if (english == "Start") return "START";
+        if (english == "Left Shoulder") return "L";
+        if (english == "Right Shoulder") return "R";
     }
     return english;
 }
@@ -306,7 +349,21 @@ std::string StringTranslate::translateKeyFormat(const std::string &s, const char
 std::string StringTranslate::translateNamedKey(const std::string &s)
 {
     auto it = translateTable.find(s + ".name");
-    return it != translateTable.end() ? it->second : "";
+    if (it != translateTable.end())
+        return it->second;
+    // Hardcoded Spanish fallbacks for item names missing from lang files
+    if (currentLanguage.rfind("es_", 0) == 0)
+    {
+        if (s == "item.beefRaw") return "Filete de vaca crudo";
+        if (s == "item.beefCooked") return "Filete de vaca";
+        if (s == "item.porkRaw") return "Filete de cerdo crudo";
+        if (s == "item.porkCooked") return "Filete de cerdo";
+        if (s == "item.chickenRaw") return "Pollo crudo";
+        if (s == "item.chickenCooked") return "Pollo cocinado";
+        if (s == "item.fishRaw") return "Pescado crudo";
+        if (s == "item.fishCooked") return "Pescado cocinado";
+    }
+    return "";
 }
 
 bool StringTranslate::loadLanguageFile(const std::string &path, bool ui)

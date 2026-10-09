@@ -2,13 +2,10 @@
 
 #include <cstdint>
 #include <chrono>
+#include <thread>
 
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 #include "pc/lwjgl/Mouse.h"
 #include "pc/lwjgl/Display.h"
-#else
-#include <SDL.h>
-#endif
 
 #ifdef WII_PLATFORM
 #include <ogc/lwp_watchdog.h>
@@ -24,7 +21,9 @@
 #endif
 
 // Small platform layer for code that is shared by PC and the console ports.
-// Keep direct SDL calls inside this file or inside src/pc only.
+// Keep windowing/input calls inside this file or inside src/pc only. After
+// the 2026-10 GLFW migration there is no SDL left in here: desktop timing is
+// std::chrono and input state goes through the lwjgl accessors.
 namespace PlatformCompat
 {
 inline uint32_t getTicks()
@@ -45,7 +44,10 @@ inline uint32_t getTicks()
     // app has wired up.
     return static_cast<uint32_t>(svcGetSystemTick() / (u64)CPU_TICKS_PER_MSEC);
 #else
-    return SDL_GetTicks();
+    // Monotonic steady clock, the same source the PS2 branch uses — with the
+    // window/input stack on GLFW there is no SDL timer left to read.
+    using namespace std::chrono;
+    return static_cast<uint32_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 #endif
 }
 
@@ -101,41 +103,37 @@ inline void delay(uint32_t ms)
     // The PS2 main loop is already synced by the GS flip. Do not busy-wait here.
     (void)ms;
 #else
-    SDL_Delay(ms);
+    if (ms)
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
 #endif
 }
 
+#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 inline void setSmoothInputThreadPriority(bool enabled)
 {
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
     // C6's Smooth Input is a JVM main-thread priority tweak. The console ports
     // have different scheduler/audio/input constraints, so changing their main
     // thread priority here would be a new platform policy rather than a faithful
     // translation of the desktop optimization.
     (void)enabled;
-#else
-    // Java C6 uses priority 10 normally and priority 5 with Smooth Input. SDL's
-    // closest portable mapping is HIGH -> NORMAL. Cache the setting so the OS
-    // priority API is touched only when the option changes, not every frame.
-    static int appliedState = -1;
-    const int requestedState = enabled ? 1 : 0;
-    if (appliedState == requestedState)
-        return;
-
-    SDL_SetThreadPriority(enabled ? SDL_THREAD_PRIORITY_NORMAL : SDL_THREAD_PRIORITY_HIGH);
-    appliedState = requestedState;
-#endif
 }
+#else
+// Java C6 runs the game thread at priority 10 and drops it to 5 with Smooth
+// Input; the desktop maps that to Win32 SetThreadPriority (HIGHEST vs
+// NORMAL). Declared here, defined in src/pc/PlatformCompat_PC.cpp so that
+// <windows.h> stays out of this widely included header. POSIX has no
+// unprivileged way to raise a thread's priority, so there it is a no-op —
+// the same platform-policy call the console ports make.
+void setSmoothInputThreadPriority(bool enabled);
+#endif
 
 inline void getMouseState(int *x, int *y)
 {
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
-    // LWJGL Mouse::getY() is bottom-left origin. SDL_GetMouseState() is
-    // top-left origin, and shared GUI code expects that here.
+    // LWJGL Mouse::getX()/getY() are bottom-left origin; shared GUI code
+    // expects top-left here, so flip back. Every platform goes through the
+    // lwjgl accessors now — the desktop used to read SDL_GetMouseState()
+    // directly, which reported the same top-left values.
     if (x) *x = lwjgl::Mouse::getX();
     if (y) *y = lwjgl::Display::getHeight() - lwjgl::Mouse::getY() - 1;
-#else
-    SDL_GetMouseState(x, y);
-#endif
 }
 }

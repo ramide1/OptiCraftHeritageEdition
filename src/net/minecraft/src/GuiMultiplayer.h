@@ -86,6 +86,9 @@ private:
     GuiButton *buttonEdit;
     GuiButton *buttonSelect;
     GuiButton *buttonDelete;
+    // Microsoft account corner entry (id 11), ViaFabricPlus-style; nullptr
+    // on builds without the login transport.
+    GuiButton *buttonAccount;
     bool deleteClicked;
     bool addClicked;
     bool editClicked;

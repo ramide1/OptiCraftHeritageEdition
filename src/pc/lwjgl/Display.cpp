@@ -4,17 +4,14 @@
 #include <stdexcept>
 
 #include "lwjgl/GLContext.h"
-#include "lwjgl/Mouse.h"
-#include "lwjgl/Keyboard.h"
 
-#include "external/SDLException.h"
+#include "external/GlfwException.h"
 #include "pc/render/PcRenderBackend.h"
 #if defined(MC_WIN32)
 #include "pc/render/d3d9/PcD3D9Context.h"
 #endif
 
-#include "SDL.h"
-#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 
 namespace lwjgl
 {
@@ -25,12 +22,30 @@ static bool close_requested = false;
 
 static DisplayMode current_display_mode(0, 0);
 
+// The windowed rect, stashed when going fullscreen so setFullscreen(false)
+// can restore it — GLFW needs the position and size handed back explicitly,
+// where SDL remembered them itself.
+static int windowed_x = 0, windowed_y = 0;
+static int windowed_width = 854, windowed_height = 480;
+
+namespace detail
+{
+
+void requestClose()
+{
+	close_requested = true;
+}
+
+}
+
 // Display functions
 void setDisplayMode(const DisplayMode &display_mode)
 {
 	if (!display_mode.isFullscreen())
 	{
-		SDL_SetWindowSize(GLContext::detail::getWindow(), display_mode.getWidth(), display_mode.getHeight());
+		windowed_width = display_mode.getWidth();
+		windowed_height = display_mode.getHeight();
+		glfwSetWindowSize(GLContext::detail::getWindow(), windowed_width, windowed_height);
 	}
 	current_display_mode = display_mode;
 	setFullscreen(display_mode.isFullscreen());
@@ -44,35 +59,63 @@ DisplayMode getDisplayMode()
 void setTitle(const jstring &string)
 {
 	// I guess this gets ignored in favor of the frame title
-	// SDL_SetWindowTitle(GLContext::detail::getWindow(), string.c_str());
+	//
+	(void)string;
 }
 
 void setFullscreen(bool fullscreen)
 {
-	if (SDL_SetWindowFullscreen(GLContext::detail::getWindow(), fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0))
-		throw SDLException();
-	
+	GLFWwindow *window = GLContext::detail::getWindow();
+
+	// No monitor switch needed when already in the requested state. This is
+	// the windowed setDisplayMode() path at startup too: running it through
+	// glfwSetWindowMonitor anyway recreates the Win32 window styles (which
+	// drops the caption buttons until the next user resize) and stomps the
+	// centered position with the still-zero windowed_x/windowed_y statics.
+	if (fullscreen == (glfwGetWindowMonitor(window) != nullptr))
+	{
+		int w, h;
+		glfwGetWindowSize(window, &w, &h);
+		if (fullscreen)
+			current_display_mode = DisplayMode(w, h, 32, glfwGetVideoMode(glfwGetPrimaryMonitor())->refreshRate);
+		else
+			current_display_mode = DisplayMode(w, h);
+		return;
+	}
+
+	// Stash the windowed rect while still windowed, or the fullscreen size
+	// would become the "restore" size.
+	if (fullscreen && glfwGetWindowMonitor(window) == nullptr)
+	{
+		glfwGetWindowPos(window, &windowed_x, &windowed_y);
+		glfwGetWindowSize(window, &windowed_width, &windowed_height);
+	}
+
+	GLFWmonitor *monitor = fullscreen ? glfwGetPrimaryMonitor() : nullptr;
+	if (monitor != nullptr)
+	{
+		// Borderless desktop fullscreen, the GLFW equivalent of
+		// SDL_WINDOW_FULLSCREEN_DESKTOP.
+		const GLFWvidmode *mode = glfwGetVideoMode(monitor);
+		glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+	}
+	else
+	{
+		glfwSetWindowMonitor(window, nullptr, windowed_x, windowed_y,
+		                      windowed_width, windowed_height, GLFW_DONT_CARE);
+	}
+
 	// Update display mode
 	if (fullscreen)
 	{
 		int w, h;
-		int freq, bpp;
-
-		SDL_DisplayMode sdl_mode;
-		if (SDL_GetWindowDisplayMode(GLContext::detail::getWindow(), &sdl_mode))
-			throw SDLException();
-
-		w = sdl_mode.w;
-		h = sdl_mode.h;
-		freq = sdl_mode.refresh_rate;
-		bpp = SDL_BITSPERPIXEL(sdl_mode.format);
-
-		current_display_mode = DisplayMode(w, h, bpp, freq);
+		glfwGetWindowSize(window, &w, &h);
+		current_display_mode = DisplayMode(w, h, 32, glfwGetVideoMode(glfwGetPrimaryMonitor())->refreshRate);
 	}
 	else
 	{
 		int w, h;
-		SDL_GetWindowSize(GLContext::detail::getWindow(), &w, &h);
+		glfwGetWindowSize(window, &w, &h);
 		current_display_mode = DisplayMode(w, h);
 	}
 #if defined(MC_WIN32)
@@ -91,52 +134,25 @@ bool isCloseRequested()
 
 bool isVisible()
 {
-	auto flags = SDL_GetWindowFlags(GLContext::detail::getWindow());
-	return (flags & SDL_WINDOW_SHOWN) != 0;
+	return glfwGetWindowAttrib(GLContext::detail::getWindow(), GLFW_VISIBLE) != 0;
 }
 
 bool isActive()
 {
-	auto flags = SDL_GetWindowFlags(GLContext::detail::getWindow());
-	return (flags & SDL_WINDOW_INPUT_FOCUS) != 0;
+	return glfwGetWindowAttrib(GLContext::detail::getWindow(), GLFW_FOCUSED) != 0;
 }
 
 void processMessages()
 {
-	SDL_Event e;
-	while (SDL_PollEvent(&e))
-	{
-		switch (e.type)
-		{
-#if defined(MC_WIN32)
-			case SDL_WINDOWEVENT:
-				if (pcRenderBackendIsDirect3D9() &&
-					(e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED || e.window.event == SDL_WINDOWEVENT_RESIZED))
-					pcD3D9RequestResize();
-				break;
-#endif
-			case SDL_QUIT:
-				close_requested = true;
-				break;
-			case SDL_MOUSEMOTION:
-			case SDL_MOUSEBUTTONDOWN:
-			case SDL_MOUSEBUTTONUP:
-			case SDL_MOUSEWHEEL:
-				Mouse::detail::pushEvent(e);
-				break;
-			case SDL_KEYDOWN:
-			case SDL_KEYUP:
-			case SDL_TEXTINPUT:
-				Keyboard::detail::pushEvent(e);
-				break;
-		}
-	}
+	// The event dispatch itself is callback-driven (see pc/lwjgl/GlfwEvents.cpp);
+	// polling just pumps the GLFW event queue once per frame.
+	glfwPollEvents();
 
 	// Update display mode
 	if (!current_display_mode.isFullscreen())
 	{
 		int w, h;
-		SDL_GetWindowSize(GLContext::detail::getWindow(), &w, &h);
+		glfwGetWindowSize(GLContext::detail::getWindow(), &w, &h);
 		current_display_mode = DisplayMode(w, h);
 	}
 #if defined(MC_WIN32)
@@ -154,7 +170,7 @@ void swapBuffers()
 		return;
 	}
 #endif
-	SDL_GL_SwapWindow(GLContext::detail::getWindow());
+	glfwSwapBuffers(GLContext::detail::getWindow());
 }
 
 void update(bool doProcessMessages)
@@ -166,21 +182,33 @@ void update(bool doProcessMessages)
 
 void create()
 {
-	SDL_ShowWindow(GLContext::detail::getWindow());
-	SDL_StartTextInput();
+	GLFWwindow *window = GLContext::detail::getWindow();
+	glfwShowWindow(window);
+	// Latch the real on-screen rect now that the window is visible: the
+	// windowed_x/y/width/height statics above still hold their defaults
+	// (0,0,854,480), and a later fullscreen->windowed restore must hand
+	// back where the window actually is, not the origin.
+	glfwGetWindowPos(window, &windowed_x, &windowed_y);
+	glfwGetWindowSize(window, &windowed_width, &windowed_height);
+	// Center cursor on startup
+	int w, h;
+	glfwGetWindowSize(window, &w, &h);
+	glfwSetCursorPos(window, w / 2.0, h / 2.0);
+	// No SDL_StartTextInput equivalent: GLFW delivers character events
+	// unconditionally, and the game only ever wanted them flowing.
 }
 
 int_t getX()
 {
 	int x;
-	SDL_GetWindowPosition(GLContext::detail::getWindow(), &x, nullptr);
+	glfwGetWindowPos(GLContext::detail::getWindow(), &x, nullptr);
 	return x;
 }
 
 int_t getY()
 {
 	int y;
-	SDL_GetWindowPosition(GLContext::detail::getWindow(), nullptr, &y);
+	glfwGetWindowPos(GLContext::detail::getWindow(), nullptr, &y);
 	return y;
 }
 

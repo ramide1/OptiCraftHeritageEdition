@@ -14,7 +14,8 @@
 #include "platform/PlatformTuning.h"
 #include "platform/Input.h"
 #if !PLATFORM_PS2 && !PLATFORM_WII && !PLATFORM_3DS
-#include "SDL_clipboard.h"
+#include <GLFW/glfw3.h>
+#include "pc/lwjgl/GLContext.h"
 #endif
 #if PLATFORM_PS2 || PLATFORM_WII || PLATFORM_3DS
 #include "VirtualKeyboard.h"
@@ -219,15 +220,12 @@ void GuiScreen::keyTyped(char_t c, int_t key)
 
 jstring GuiScreen::getClipboardString()
 {
-	// SDL clipboard
+	// GLFW clipboard; the string is owned by GLFW until the next clipboard
+	// call, so copy it out immediately.
 #if !PLATFORM_PS2 && !PLATFORM_WII && !PLATFORM_3DS
-	char *text = SDL_GetClipboardText();
-	if (text)
-	{
-		std::string s(text);
-		SDL_free(text);
-		return s;
-	}
+	const char *text = glfwGetClipboardString(lwjgl::GLContext::detail::getWindow());
+	if (text != nullptr)
+		return std::string(text);
 #endif
 	return jstring(nullptr);
 }
@@ -235,7 +233,7 @@ jstring GuiScreen::getClipboardString()
 void GuiScreen::setClipboardString(const std::string &text)
 {
 #if !PLATFORM_PS2 && !PLATFORM_WII && !PLATFORM_3DS
-	SDL_SetClipboardText(text.c_str());
+	glfwSetClipboardString(lwjgl::GLContext::detail::getWindow(), text.c_str());
 #else
 	(void)text;
 #endif

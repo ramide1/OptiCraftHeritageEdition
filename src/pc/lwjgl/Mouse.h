@@ -2,10 +2,6 @@
 
 #include "java/Type.h"
 
-#if !defined(PS2_PLATFORM) && !defined(WII_PLATFORM) && !defined(CTR_PLATFORM)
-#include "SDL_events.h"
-#endif
-
 namespace lwjgl
 {
 namespace Mouse
@@ -13,19 +9,19 @@ namespace Mouse
 namespace detail
 {
 
-#if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
-// Consoles have no SDL event pump; the platform's input poll feeds events here.
+// Every platform feeds mouse events through the same pushers:
 //   PS2 — right stick drives a simulated cursor.
 //   Wii — the Wiimote IR pointer drives it directly, with the Classic/GC right
 //         stick as the fallback when the pointer is off-screen.
-//   3DS — the touch screen drives it directly (bottom LCD, already absolute in
-//         top-screen pixels; see src/3ds/input/DsInput).
+//   3DS — the touch screen drives it directly (bottom LCD, already absolute
+//         in top-screen pixels; see src/3ds/input/DsInput).
+//   PC  — the GLFW callback bridge (pc/lwjgl/GlfwEvents.cpp).
+// Coordinates arriving here are top-left origin; each implementation stores
+// or flips them as it needs, and the public getX()/getY()/getEventY() accessors
+// are bottom-left origin per LWJGL.
 void pushMotion(int x, int y, int xrel, int yrel);
 void pushButton(int button, bool down, int x, int y);
 void pushWheel(int delta, int x, int y);
-#else
-void pushEvent(const SDL_Event &e);
-#endif
 
 }
 

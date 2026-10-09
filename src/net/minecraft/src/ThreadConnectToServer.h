@@ -7,6 +7,7 @@
 #include "platform/Mutex.h"
 
 #include "java/Type.h"
+#include "ProtocolVersion.h"
 
 class GuiConnecting;
 class Minecraft;
@@ -16,7 +17,8 @@ class NetClientHandler;
 class ThreadConnectToServer
 {
 public:
-	ThreadConnectToServer(GuiConnecting *guiconnecting, Minecraft *minecraft, const std::string &s, int_t i);
+	ThreadConnectToServer(GuiConnecting *guiconnecting, Minecraft *minecraft, const std::string &s, int_t i,
+	                      int_t protocolVersion = ProtocolVersions::kNativeVersion);
 	~ThreadConnectToServer();
 
 	void start();
@@ -30,6 +32,7 @@ private:
 	Minecraft *mc;
 	std::string hostName;
 	int_t port;
+	int_t loginProtocolVersion;
 	PlatformMutex resultLock;
 	NetClientHandler *resultHandler = nullptr;
 	std::string resultError;

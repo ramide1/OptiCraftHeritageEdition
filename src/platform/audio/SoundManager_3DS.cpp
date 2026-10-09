@@ -7,9 +7,9 @@
 //   * .adp  SPU2-ADPCM exactly as ps2sdk's adpenc writes it (the "APCM"
 //     16-byte header plus 16-byte blocks from scripts/ogg to adp). The 3DS
 //     has no SPU2 to decode that in hardware, so the shared portable decoder
-//     the PS2 streamer uses (ps2/audio/Ps2AdpcmStreamDecoder.*, listed into
-//     this target by cmake/3ds.cmake -- pure C++, no PS2 SDK dependency)
-//     turns the blocks into 16-bit PCM.
+//     the PS2 streamer uses (platform/audio/Ps2AdpcmStreamDecoder.*, part of
+//     the common platform sources every target compiles) turns the blocks
+//     into 16-bit PCM.
 //   * .pcm  raw s16le with no header (scripts/ogg to pcm): the shape the
 //     PS2 pack's music/ and streaming/ folders actually carry. There is no
 //     header to read a rate or channel count from, so the stream reads them
@@ -83,7 +83,7 @@ void SoundManager::tryToSetLibraryAndCodecs() {}
 #include "net/minecraft/src/EntityLiving.h"
 #include "net/minecraft/src/SoundPoolEntry.h"
 #include "3ds/audio/DsStreamFile.h"
-#include "ps2/audio/Ps2AdpcmStreamDecoder.h"
+#include "platform/audio/Ps2AdpcmStreamDecoder.h"
 #include "platform/Resources.h"
 #include "platform/audio/AudioAssetFormat.h"
 #include "platform/audio/AudioSpatialization.h"

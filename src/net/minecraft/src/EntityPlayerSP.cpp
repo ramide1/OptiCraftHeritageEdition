@@ -80,7 +80,8 @@ bool autoJumpIsJumpable(World *world, int_t x, int_t y, int_t z, double feetY)
 		return false;
 	if (block == Block::fence || block == Block::fenceIron || block == Block::fenceGate ||
 		block == Block::trapdoor ||
-		block == Block::signPost || block == Block::signWall)
+		block == Block::signPost || block == Block::signWall ||
+		block == Block::doorWood || block == Block::doorSteel)
 		return false;
 	if (block->getRenderType() == 10) // 10 == SHAPE_STAIRS
 		return false;

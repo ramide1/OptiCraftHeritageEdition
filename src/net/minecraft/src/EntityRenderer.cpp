@@ -1328,6 +1328,22 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
             }
         }
 #endif
+#if PLATFORM_PC
+        // Desktop reads both: the twin-stick right stick above and the classic
+        // mouse queue here. The mouse branch below only compiles where the
+        // direct pad camera is off, so without this copy PC mouse-look is
+        // compiled out entirely (grab, events and deltas all fine, camera
+        // frozen). Consoles keep their single path each -- untouched.
+        mc->mouseHelper->mouseXYChange();
+        {
+            float sensitivity = mc->gameSettings->mouseSensitivity * 0.6f + 0.2f;
+            float sensitivityCubed = sensitivity * sensitivity * sensitivity * PLATFORM_MOUSE_CAMERA_SCALE;
+            float deltaX = (float)mc->mouseHelper->deltaX * sensitivityCubed;
+            float deltaY = (float)mc->mouseHelper->deltaY * sensitivityCubed;
+            int invertMultiplier = mc->gameSettings->invertMouse ? -1 : 1;
+            mc->thePlayer->turnEntity(deltaX, deltaY * (float)invertMultiplier);
+        }
+#endif
 #else
         mc->mouseHelper->mouseXYChange();
         float sensitivity = mc->gameSettings->mouseSensitivity * 0.6f + 0.2f;
@@ -1391,7 +1407,16 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
     }
     // [FIX CRÍTICO WII] Prevenir división por cero si fpsLimitChar es '\0' (0).
     // Si limitFramerate es 0 (ilimitado) o tiene un valor anómalo, establecemos 120L para evitar congelamiento fatal en PowerPC.
-    const long limitFps = (fpsLimitChar > '\0') ? static_cast<long>(fpsLimitChar) : 120L;
+    long limitFps = (fpsLimitChar > '\0') ? static_cast<long>(fpsLimitChar) : 120L;
+
+    // Dynamic-FPS shape: an inactive (unfocused) window renders at a
+    // background cap no matter what the Performance setting says, so an
+    // alt-tabbed game stops burning CPU/GPU on frames nobody sees. Ticks
+    // keep running on wall-clock time; only presentation is throttled.
+    // Consoles always report active (their Display::isActive returns true),
+    // so this only ever bites on desktop.
+    if (!lwjgl::Display::isActive() && limitFps > 10L)
+        limitFps = 10L;
     
     if (mc->theWorld != nullptr)
     {
@@ -1436,6 +1461,23 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
                 platformProfileDrawCategory(PlatformDrawCategory::Gui, hudDrawStart);
 #endif
             }
+
+            // Dynamic-FPS presentation throttle (world branch): same sleep
+            // shape as the menu branch below, so an inactive window holds
+            // ~10 fps here too. The mesh budget above (targetTime) is left
+            // exactly as the Performance setting says -- throttling here is
+            // purely presentational, and doing fewer frames already cuts the
+            // per-second meshing cost with it.
+            if (!lwjgl::Display::isActive())
+            {
+                int64_t backgroundSleepMs = (field_28133_I + (int64_t)(1000000000LL / 10L) -
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count()) / 1000000LL;
+                if (backgroundSleepMs < 0)
+                    backgroundSleepMs += 10;
+                if (backgroundSleepMs > 0 && backgroundSleepMs < 500)
+                    PlatformCompat::delay((uint32_t)backgroundSleepMs);
+            }
         }
     }
     else
@@ -1449,7 +1491,7 @@ void EntityRenderer::updateCameraAndRender(float partialTicks)
         
         setupOverlayRendering();
         
-        if (mc->gameSettings->limitFramerate == 2)
+        if (mc->gameSettings->limitFramerate == 2 || !lwjgl::Display::isActive())
         {
             int64_t sleepTime = (field_28133_I + (int64_t)(1000000000LL / limitFps) - 
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(

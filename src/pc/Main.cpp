@@ -1,5 +1,6 @@
-#define SDL_MAIN_HANDLED
-#include "SDL.h"
+// Audio output is OpenAL-soft (etapa 2 of the 2026-10 migration); gamepad
+// input is SDL3 (etapa 3) and desktop sockets are native Winsock/BSD.
+// Window, GL context and keyboard/mouse events are GLFW's job.
 
 #include <cctype>
 #include <cstring>
@@ -7,11 +8,13 @@
 #include <fstream>
 #include <string>
 
+#include <GLFW/glfw3.h>
+
 #include "client/Minecraft.h"
 #include "net/minecraft/src/GameResources.h"
 #include "net/minecraft/src/Tessellator.h"
 
-#include "external/SDLException.h"
+#include "external/GlfwException.h"
 
 #include "lwjgl/GLContext.h"
 #include "pc/render/PcRenderBackend.h"
@@ -99,8 +102,11 @@ std::string loadUsername()
 
 int main(int argc, char *argv[])
 {
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER | SDL_INIT_AUDIO) < 0)
-		throw SDLException();
+	// GLFW owns the window, GL context and keyboard/mouse events. Audio is
+	// OpenAL and sockets are native (no SDL init needed anywhere here).
+	if (!glfwInit())
+		throw GlfwException();
+
 	pcRenderBackendSetRequested(loadRenderBackendPreference());
 	lwjgl::GLContext::setRequestedSamples(loadOptiFineAaLevel());
 	lwjgl::GLContext::instantiate();

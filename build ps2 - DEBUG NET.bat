@@ -34,8 +34,8 @@ if /I "%~1"=="data" (
     xcopy /E /I /Y /Q "data\startup"       "!USBDATA!\startup"
     if errorlevel 1 exit /b 1
     REM Wiped rather than merged: xcopy would leave behind whatever a previous
-    REM staging put there, and a stale desktop data\resources (OGG) mixed into
-    REM the converted ADPCM tree is 20 MB of files the PS2 mixer cannot play.
+    REM staging put there, and a stale desktop data\resources tree mixed into
+    REM the converted ADPCM tree is files the PS2 mixer cannot play.
     if exist "!USBDATA!\resources" rmdir /s /q "!USBDATA!\resources"
     xcopy /E /I /Y /Q "data\resources_ps2" "!USBDATA!\resources"
     if errorlevel 1 exit /b 1
@@ -53,8 +53,8 @@ if /I "%~1"=="data" (
     exit /b 0
 )
 
-"%CMAKE_EXE%" --preset  ps2-remote-debug -DPS2_ENABLE_SOUND=OFF -DPS2_ENABLE_PERSPECTIVE_TEXTURES=ON -DPS2_RENDER_STATS=OFF -DPS2_ENABLE_VU1_TERRAIN=ON -DMC_LOG_LEVEL=3
+"%CMAKE_EXE%" --preset ps2-debug -DPS2_ENABLE_SOUND=OFF -DPS2_ENABLE_PERSPECTIVE_TEXTURES=ON -DPS2_RENDER_STATS=OFF -DPS2_ENABLE_VU1_TERRAIN=ON -DMC_LOG_LEVEL=3
 if errorlevel 1 exit /b 1
-"%CMAKE_EXE%" --build --preset  ps2-remote-debug --parallel
+"%CMAKE_EXE%" --build --preset ps2-debug --parallel
 if errorlevel 1 exit /b 1
 pause

@@ -605,12 +605,10 @@ void Config::sleep(long ms)
 {
 #if defined(PS2_PLATFORM)
 	(void)ms;
-#elif defined(WII_PLATFORM) || defined(CTR_PLATFORM)
-	// Real sleep on this console: PlatformCompat::delay yields to the
-	// scheduler, so audio and background threads keep running while we wait
-	// (svcSleepThread on the 3DS, LWP_SleepThread on the Wii).
-	PlatformCompat::delay((uint32_t)ms);
 #else
-	SDL_Delay((Uint32)ms);
+	// Every other platform gets the real yielding sleep through PlatformCompat
+	// (svcSleepThread on the 3DS, LWP_SleepThread on the Wii, std::chrono on
+	// the desktop since the GLFW migration took SDL_Delay away).
+	PlatformCompat::delay((uint32_t)ms);
 #endif
 }

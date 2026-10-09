@@ -34,8 +34,8 @@ if /I "%~1"=="data" (
     xcopy /E /I /Y /Q "data\startup"       "!USBDATA!\startup"
     if errorlevel 1 exit /b 1
     REM Wiped rather than merged: xcopy would leave behind whatever a previous
-    REM staging put there, and a stale desktop data\resources (OGG) mixed into
-    REM the converted ADPCM tree is 20 MB of files the PS2 mixer cannot play.
+    REM staging put there, and a stale desktop data\resources tree mixed into
+    REM the converted ADPCM tree is files the PS2 mixer cannot play.
     if exist "!USBDATA!\resources" rmdir /s /q "!USBDATA!\resources"
     xcopy /E /I /Y /Q "data\resources_ps2" "!USBDATA!\resources"
     if errorlevel 1 exit /b 1

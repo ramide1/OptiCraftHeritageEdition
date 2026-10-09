@@ -231,6 +231,10 @@ int TileEntityFurnace::getItemBurnTime(ItemStack* itemstack) {
         return 0;
     }
     int i = item->shiftedIndex;
+    // Check for wood-based items (including wooden doors - shiftedIndex > 256)
+    if (i == Item::doorWood->shiftedIndex) {
+        return 300; // Wooden door burns like wood
+    }
     if (i < 256 && Block::blocksList[i]->blockMaterial == Material::wood) {
         return 300;
     }

@@ -22,7 +22,7 @@ echo ========================================
 
 for /r "%mainFolder%" %%f in (*.ogg) do (
     echo Convirtiendo "%%f"
-    ffmpeg -y -i "%%f" -ac 2 -ar 22050 -c:a pcm_s16le -f s16le "%%~dpnf.pcm"
+    ffmpeg -y -i "%%f" -ac 1 -ar 22050 -c:a pcm_s16le -f s16le "%%~dpnf.pcm"
 )
 
 :OGGDelete

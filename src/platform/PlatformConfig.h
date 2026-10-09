@@ -50,6 +50,20 @@
 #  endif
 #endif
 
+// Microsoft account login. Always wired on desktop/3DS, gated at runtime by
+// the client id (PrismLauncher's public id by default, so the login UI
+// shows; empty hides it):
+//   - the desktop target vendors Mbed TLS, embeds the CA bundle and links
+//     the transport unconditionally (see CMakeLists.txt),
+//   - the 3DS transport (3ds-curl) compiles whenever networking does,
+//   - Wii/PS2 have no TLS stack in-tree and stay offline.
+// Configure -DOPTICRAFT_MSA_CLIENT_ID=<id> (desktop presets, 3ds presets,
+// or build 3ds.bat) to use your own allowlisted id, or an empty string to
+// hide the login UI.
+#ifndef PLATFORM_MSAUTH
+#  define PLATFORM_MSAUTH 0
+#endif
+
 // User-facing hardware calibration features.
 #ifndef PLATFORM_HAS_CONTROLLER_CALIBRATION
 #  define PLATFORM_HAS_CONTROLLER_CALIBRATION (PLATFORM_PS2 || PLATFORM_WII)
@@ -102,9 +116,10 @@
 // it the D-pad moves the player while the circle pad stays dead. The 3DS
 // backend applies the same deadzone+rescale the PS2's Ps2AnalogFilter gives
 // its sticks at the same place, so the axes arrive filtered the way the
-// movement code already expects.
+// movement code already expects. PC joins through its SDL3 gamepad backend
+// (InputBackend_PC), which cooks axes with the identical filter.
 #ifndef PLATFORM_DIRECT_ANALOG_MOVEMENT
-#  define PLATFORM_DIRECT_ANALOG_MOVEMENT (PLATFORM_PS2 || PLATFORM_3DS)
+#  define PLATFORM_DIRECT_ANALOG_MOVEMENT (PLATFORM_PS2 || PLATFORM_3DS || PLATFORM_PC)
 #endif
 
 // Async chunk generation, the Wii's streaming shape: a worker thread builds

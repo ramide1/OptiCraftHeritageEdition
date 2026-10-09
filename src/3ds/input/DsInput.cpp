@@ -1311,6 +1311,22 @@ void dsInputPoll(bool inMenu)
 		// The finger lifting off a widget ends its action: the latched key
 		// comes up here -- a hold on the hotbar selects once, not forever.
 		releaseTouchHudWidget();
+		// Reseed the menu navigation state exactly once, on the poll the
+		// finger lifts (g_prevTouchDown still holds last poll's sample;
+		// it is stored below), so the next D-pad press after a touch
+		// session is treated as a fresh press. This MUST stay
+		// release-edged: running it on every touchless poll zeroes the
+		// previous-button state updateGameplay() differences against, so
+		// every still-held button re-pushes a press event per poll and one
+		// tap steps/advances N times (2026-10-09, 3DS: A crossed two
+		// screens, D-pad moved two steps per press). This fixes D-pad
+		// navigation loss after touch interaction in menus (e.g. changing
+		// difficulty in Options via touch).
+		if (g_inMenu && g_prevTouchDown)
+		{
+			g_prevMenuNav = 0;
+			g_prevMenuShoulders = 0;
+		}
 		// The pad gesture's verdict on lift: a short stationary contact
 		// taps (the game side decides place vs swing); anything longer or
 		// dragged already acted, or was the camera all along. An off

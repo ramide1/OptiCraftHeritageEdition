@@ -17,6 +17,7 @@ void MinecraftImpl::displayUnexpectedThrowable(UnexpectedThrowable *unexpectedth
 {
     PanelCrashReport report(unexpectedthrowable);
     MC_LOG_ERROR("crash", "%s\n", report.getText().c_str());
-    // In SDL2 the crash text is written to stderr;
+    // The crash text is logged, and CrashHandler::Crash takes it from here
+    // (a native MessageBox on Windows, stderr elsewhere);
     // the frame reference (mcFrame) would receive the panel in the AWT build.
 }

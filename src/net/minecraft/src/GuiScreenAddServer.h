@@ -1,7 +1,9 @@
 #pragma once
 
 #include "GuiScreen.h"
+#include "java/Type.h"
 
+class GuiButton;
 class GuiTextField;
 class ServerNBTStorage;
 
@@ -24,10 +26,16 @@ protected:
 
 private:
     void updateAddButtonState();
+    void cycleVersion();
+    void updateVersionButtonLabel();
 
     GuiScreen *parentGui;
     GuiTextField *serverAddress;
     GuiTextField *serverName;
     GuiButton *buttonAdd;
+    GuiButton *buttonVersion;
     ServerNBTStorage *serverNBTStorage;
+    // Per-server wire protocol (ProtocolVersions::kAutoVersion = follow the
+    // global default); written back to serverNBTStorage on Add.
+    int_t selectedVersion;
 };

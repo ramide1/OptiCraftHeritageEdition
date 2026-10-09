@@ -5,10 +5,6 @@
 #include "java/Type.h"
 #include "java/String.h"
 
-#if !defined(PS2_PLATFORM) && !defined(WII_PLATFORM) && !defined(CTR_PLATFORM)
-#include "SDL_events.h"
-#endif
-
 namespace lwjgl
 {
 namespace Keyboard
@@ -17,7 +13,7 @@ namespace detail
 {
 
 #if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
-// Consoles have no SDL event pump. The platform's input poll feeds key events
+// Consoles have no OS event pump. The platform's input poll feeds key events
 // straight into these instead:
 //   PS2 — pad poll plus the on-screen virtual keyboard.
 //   Wii — WPAD/PAD poll plus a real USB keyboard via libwiikeyboard.
@@ -25,7 +21,13 @@ namespace detail
 void pushKey(int lwjglKey, bool down);
 void pushChar(int character);
 #else
-void pushEvent(const SDL_Event &e);
+// GLFW is callback-driven: the bridge in pc/lwjgl/GlfwEvents.cpp feeds these
+// from the key/char callbacks instead of a polled event structure. The
+// repeat flag carries GLFW_REPEAT through so enableRepeatEvents() filtering
+// keeps working; consoles synthesize their own repeats and keep the
+// two-argument form.
+void pushKey(int lwjglKey, bool down, bool repeat = false);
+void pushChar(int character);
 #endif
 
 }

@@ -26,7 +26,7 @@ This project is not affiliated with, endorsed by, or sponsored by Mojang Studios
 
 ### PC (Windows, Linux, macOS)
 
-The desktop build uses SDL2, OpenGL, and the shared platform abstraction layer. It is continuously built on Windows (x64, x86, and ARM64, across GCC, Clang, and MSVC toolchains, including a legacy low-end x86 profile and CPU-tuned variants), Linux (x64, x86, ARM64, and ARMv7 with GCC, plus x86_64-v3/Zen-tuned profiles), and macOS (ARM64 and x64 with Clang).
+The desktop build uses GLFW (window, OpenGL context, keyboard/mouse), OpenAL-soft (audio output) and SDL3 (gamepad input only), plus OpenGL and the shared platform abstraction layer. It is continuously built on Windows (x64, x86, and ARM64, across GCC, Clang, and MSVC toolchains, including a legacy low-end x86 profile and CPU-tuned variants), Linux (x64, x86, ARM64, and ARMv7 with GCC, plus x86_64-v3/Zen-tuned profiles), and macOS (ARM64 and x64 with Clang).
 
 A dedicated 32-bit legacy profile is available for older SSE2-class CPUs and legacy OpenGL hardware.
 
@@ -116,17 +116,29 @@ Platform targets deliberately select one implementation for each public backend.
 
 CMake 3.21 or newer is required. Presets are defined in `CMakePresets.json`.
 
-Most dependencies are vendored under `external/`. The one exception is SDL_net, which is gitignored and must be cloned separately before a desktop configure:
+Dependencies live under `external/` as **pinned git submodules**, so a working checkout needs the `--recurse-submodules` flag (or run `git submodule update --init --recursive` in an existing clone):
 
 ```sh
-git clone --depth 1 https://github.com/libsdl-org/SDL_net.git external/SDL_net
-git -C external/SDL_net fetch --depth 1 origin b1085eed744eab0c894a5306d822c9241bcf0228
-git -C external/SDL_net checkout FETCH_HEAD
+git clone --recurse-submodules <repo-url>
 ```
+
+The pins: `GLFW` at `3.5.1`, `openal-soft` at `1.25.2`, `SDL3` at `release-3.4.18`, `zlib` at `v1.3.1`, `mbedtls` at `v3.6.7` (which itself carries a nested `framework` submodule — the recursive flag covers it), plus `stb` and `quirc` at their current upstream tips. The one non-submodule is `external/glad`: it is generated loader output with no upstream repository, so it stays vendored.
 
 Game code uses bare includes such as `#include "Minecraft.h"`, resolved against `src/net/minecraft/src`. Console toolchain files add that include path themselves; on desktop, add `-DCMAKE_CXX_FLAGS=-I<prefix>/src/net/minecraft/src` to the configure if you hit missing-header errors.
 
+## Microsoft account login
+
+The game can sign in with a Microsoft account through the standard device-code flow (the same chain every Java launcher speaks today: Microsoft OAuth -> Xbox Live -> XSTS -> Minecraft services), storing the tokens in `accounts.nbt` next to `servers.dat`. A signed-in account overrides the offline `playerName` and performs the modern session-server join when connecting to online-mode servers. The Account button lives in the corner of the multiplayer screen.
+
+- **Desktop**: the Mbed TLS transport (`external/mbedtls`) and the embedded Mozilla CA bundle ship in every build. The login UI shows by default: the build carries PrismLauncher's public client id (`c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb`, GPL-3.0) because Microsoft no longer allowlists new third-party registrations for the Minecraft scopes; building with it means accepting the Microsoft Identity Platform Terms of Use. Override with `-DOPTICRAFT_MSA_CLIENT_ID=<id>` (empty hides the UI).
+- **3DS**: the transport ships with networking (`3ds-curl`, certificate verification ON against `cacert.pem`, staged by `build 3ds.bat data`); same default client id, same override (`build 3ds.bat -DOPTICRAFT_MSA_CLIENT_ID=<id>`).
+- **Wii/PS2**: no TLS stack in-tree; the offline identity keeps working.
+
+The client id ships defaulting to PrismLauncher's public id (above) because Microsoft no longer registers new third-party applications for the Minecraft scopes: a fresh Azure registration answers 403 Invalid app registration at Minecraft Services even with the OAuth+Xbox+XSTS chain succeeding. An empty id simply leaves the login UI hidden.
+
 ### Desktop (Windows)
+
+The `build gcc - *.bat` wrappers drive the presets below, picking a native Windows CMake automatically (never devkitPro's MSYS2 `cmake`, which writes POSIX paths into `build.ninja`). They also resolve the toolchain themselves: `gcc`/`g++` from the system MSYS2 (`C:\msys64\ucrt64\bin`, put on `PATH` for the session) and `ninja` passed explicitly via `-DCMAKE_MAKE_PROGRAM`, since the presets pin neither. The `gcc32-*` wrappers additionally need a 32-bit gcc (`C:\msys64\mingw32\bin`, `pacman -S mingw-w64-i686-gcc`) and fail with a clear message without one. All of them accept `clean` to wipe their build directory first.
 
 ```text
 cmake --preset gcc-debug

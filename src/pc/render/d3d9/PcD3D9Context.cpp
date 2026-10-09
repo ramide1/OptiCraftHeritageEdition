@@ -6,15 +6,18 @@
 #include <array>
 
 #include <d3d9.h>
-#include <SDL.h>
-#include <SDL_syswm.h>
+#include <GLFW/glfw3.h>
+// glfw3native.h only declares the native accessors when the platform macro
+// is defined first (standard GLFW practice).
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 
 #include "pc/render/d3d9/PcD3D9Internal.h"
 #include "platform/Log.h"
 
 namespace
 {
-SDL_Window* g_window = nullptr;
+GLFWwindow* g_window = nullptr;
 IDirect3D9* g_d3d = nullptr;
 IDirect3DDevice9* g_device = nullptr;
 D3DPRESENT_PARAMETERS g_present{};
@@ -24,16 +27,12 @@ int g_samples = 0;
 int g_backBufferWidth = 1;
 int g_backBufferHeight = 1;
 
-HWND getWindowHandle(SDL_Window* window)
+HWND getWindowHandle(GLFWwindow* window)
 {
     if (window == nullptr)
         return nullptr;
 
-    SDL_SysWMinfo info{};
-    SDL_VERSION(&info.version);
-    if (SDL_GetWindowWMInfo(window, &info) != SDL_TRUE)
-        return nullptr;
-    return info.info.win.window;
+    return glfwGetWin32Window(window);
 }
 
 D3DFORMAT chooseDepthFormat(D3DFORMAT adapterFormat, D3DFORMAT backBufferFormat)
@@ -99,7 +98,7 @@ void updateBackBufferSize()
     int width = 1;
     int height = 1;
     if (g_window != nullptr)
-        SDL_GetWindowSize(g_window, &width, &height);
+        glfwGetWindowSize(g_window, &width, &height);
     g_present.BackBufferWidth = static_cast<UINT>(std::max(width, 1));
     g_present.BackBufferHeight = static_cast<UINT>(std::max(height, 1));
 }
@@ -178,7 +177,7 @@ bool resetDevice()
 }
 }
 
-bool pcD3D9Initialize(SDL_Window* window, int requestedSamples)
+bool pcD3D9Initialize(GLFWwindow* window, int requestedSamples)
 {
     pcD3D9Shutdown();
     g_window = window;
@@ -329,7 +328,7 @@ bool pcD3D9ApplyPendingResize()
     int width = 1;
     int height = 1;
     if (g_window != nullptr)
-        SDL_GetWindowSize(g_window, &width, &height);
+        glfwGetWindowSize(g_window, &width, &height);
     width = std::max(width, 1);
     height = std::max(height, 1);
     if (width == g_backBufferWidth && height == g_backBufferHeight)

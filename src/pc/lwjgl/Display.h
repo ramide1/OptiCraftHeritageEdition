@@ -67,6 +67,18 @@ public:
 namespace Display
 {
 
+namespace detail
+{
+
+#if !defined(PS2_PLATFORM) && !defined(WII_PLATFORM) && !defined(CTR_PLATFORM)
+// Called by the GLFW close callback (pc/lwjgl/GlfwEvents.cpp) when the user
+// tries to close the window; the game observes it through isCloseRequested()
+// and owns the shutdown path itself, like the old SDL_QUIT handling.
+void requestClose();
+#endif
+
+}
+
 // Display functions
 void setDisplayMode(const DisplayMode &display_mode);
 DisplayMode getDisplayMode();

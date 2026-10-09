@@ -16,6 +16,7 @@
 #include "Config.h"
 #include "Minecraft.h"
 #include "Session.h"
+#include "ProtocolVersion.h"
 #include "EntityRenderer.h"
 #include "RenderGlobal.h"
 #include "RenderBlocks.h"
@@ -140,6 +141,7 @@ void GameSettings::setDefaults()
     lastServer = "";
     language = "en_US";
     playerName = "Player";
+    serverVersion = ProtocolVersions::kNativeVersion;
     selectedSkin = "LegacySteve";
     selectedSkinP2 = "TennisSteve";
     legacyUI = legacyUiDefaultEnabled();

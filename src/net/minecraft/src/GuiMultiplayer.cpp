@@ -10,9 +10,12 @@
 #include "ChatAllowedCharacters.h"
 #include "CompressedStreamTools.h"
 #include "FontRenderer.h"
+#include "GameSettings.h"
 #include "GuiButton.h"
 #ifndef NO_NETWORK
 #include "GuiConnecting.h"
+#include "GuiMicrosoftLogin.h"
+#include "MicrosoftAccount.h"
 #endif
 #include "GuiScreenAddServer.h"
 #include "GuiScreenServerList.h"
@@ -23,6 +26,7 @@
 #include "NBTTagCompound.h"
 #include "NBTTagList.h"
 #include "Packet.h"
+#include "ProtocolVersion.h"
 #include "RenderEngine.h"
 #include "ServerNBTStorage.h"
 #include "StatCollector.h"
@@ -276,6 +280,19 @@ void GuiMultiplayer::initGuiControls()
 
     if (serverSlotContainer != nullptr)
         serverSlotContainer->registerScrollButtons(controlList, 9, 10);
+    buttonAccount = nullptr;
+#ifndef NO_NETWORK
+    // ViaFabricPlus-style corner entry: the account state is multiplayer
+    // state. Only builds whose transport can actually run the flow show it
+    // (desktop with a client id, 3DS likewise).
+    if (MicrosoftAccounts::loginSupported())
+    {
+        const std::string label = MicrosoftAccounts::hasAccount()
+                                      ? uiText("Account") + ": " + MicrosoftAccounts::account().username
+                                      : uiText("Account") + ": " + uiText("Login");
+        controlList.push_back(buttonAccount = new GuiButton(11, width - 104, 4, 100, 20, label));
+    }
+#endif
     updateSelectionButtons();
 }
 
@@ -327,7 +344,7 @@ void GuiMultiplayer::actionPerformed(GuiButton *button)
     {
         editClicked = true;
         const auto &server = serverList[(std::size_t)selectedServer];
-        tempServer = std::make_shared<ServerNBTStorage>(server->name, server->host);
+        tempServer = std::make_shared<ServerNBTStorage>(server->name, server->host, server->version);
         mc->displayGuiScreen(new GuiScreenAddServer(this, tempServer.get()));
     }
     else if (button->id == 0)
@@ -337,6 +354,10 @@ void GuiMultiplayer::actionPerformed(GuiButton *button)
     else if (button->id == 8)
     {
         mc->displayGuiScreen(new GuiMultiplayer(parentScreen));
+    }
+    else if (button->id == 11)
+    {
+        mc->displayGuiScreen(new GuiMicrosoftLogin(this));
     }
     else if (serverSlotContainer != nullptr)
     {
@@ -382,6 +403,7 @@ void GuiMultiplayer::confirmClicked(bool confirmed, int_t id)
         {
             serverList[(std::size_t)selectedServer]->name = tempServer->name;
             serverList[(std::size_t)selectedServer]->host = tempServer->host;
+            serverList[(std::size_t)selectedServer]->version = tempServer->version;
             saveServerList();
         }
         mc->displayGuiScreen(this);
@@ -445,7 +467,14 @@ void GuiMultiplayer::joinServer(const std::shared_ptr<ServerNBTStorage> &server)
     std::string host;
     int_t port = 25565;
     splitServerAddress(server->host, host, port);
-    mc->displayGuiScreen(new GuiConnecting(mc, host, port));
+    // Per-server override wins over the global default (options.txt's
+    // serverVersion); anything the build cannot speak clamps to the native
+    // protocol so a hand-edited entry never reaches Packet1Login.
+    int_t protocolVersion = server->version != ProtocolVersions::kAutoVersion
+                                ? server->version
+                                : mc->gameSettings->serverVersion;
+    protocolVersion = ProtocolVersions::resolveSupported(protocolVersion);
+    mc->displayGuiScreen(new GuiConnecting(mc, host, port, protocolVersion));
 #endif
 }
 

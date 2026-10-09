@@ -17,6 +17,8 @@
 
 #include "Config.h"
 #include "KeyBinding.h"
+#include "MicrosoftAccount.h"
+#include "ProtocolVersion.h"
 #include "platform/GameSettingsBackend.h"
 #include "platform/PlatformKeyBindings.h"
 #include "platform/PlatformTuning.h"
@@ -175,6 +177,8 @@ void GameSettings::loadOptions()
 					language = value;
 				if (key == "playerName" && !value.empty())
 					playerName = value;
+				if (key == "serverVersion")
+					serverVersion = ProtocolVersions::resolveSupported(parseIntJava(value));
 				if (key == "selectedSkin" && !value.empty())
 				{
 					selectedSkin = value;
@@ -397,6 +401,10 @@ void GameSettings::loadOptions()
 	// offline name after options.txt has been read so the next handshake uses it.
 	if (mc != nullptr && mc->session != nullptr)
 		mc->session->username = playerName;
+	// A signed-in Microsoft account wins over the offline name: online-mode
+	// servers (and their auth proxies) expect the profile name. Null-safe
+	// without a session or an account.
+	MicrosoftAccounts::applyToSession(mc != nullptr ? mc->session : nullptr);
 }
 
 float GameSettings::parseFloat(const std::string &s)
@@ -429,7 +437,7 @@ void GameSettings::saveOptions()
 	std::unordered_set<std::string> knownKeys = {
 		"music", "sound", "invertYMouse", "mouseSensitivity", "fov", "viewDistance",
 		"guiScale", "particles", "bobView", "anaglyph3d", "advancedOpengl", "fpsLimit",
-		"difficulty", "fancyGraphics", "ao", "skin", "lastServer", "lang", "playerName", "selectedSkin", "selectedSkinP2", "legacyUI",
+		"difficulty", "fancyGraphics", "ao", "skin", "lastServer", "lang", "playerName", "serverVersion", "selectedSkin", "selectedSkinP2", "legacyUI",
 		"legacyLook", "legacyCrafting", "legacyCreative", "autoJump", "legacyGuiScaleRestore",
 		"alternativeControllerLayout", "wiiAlternativeControls", "controllerDeadzone", "wiiStickDeadzone",
 #if defined(CTR_PLATFORM)
@@ -507,6 +515,7 @@ void GameSettings::saveOptions()
 	printwriter << "lastServer:" << lastServer << "\n";
 	printwriter << "lang:" << language << "\n";
 	printwriter << "playerName:" << playerName << "\n";
+	printwriter << "serverVersion:" << serverVersion << "\n";
 	printwriter << "selectedSkin:" << selectedSkin << "\n";
 	printwriter << "selectedSkinP2:" << selectedSkinP2 << "\n";
 	printwriter << "legacyUI:" << (legacyUI ? "true" : "false") << "\n";

@@ -12,6 +12,7 @@
 #include "autologin/AutoLoginMod.h"
 
 #include <cstdio>
+#include <cctype>
 
 ModManager::ModManager()
     : mc(nullptr)
@@ -201,7 +202,53 @@ bool ModManager::installModPack(const std::string &sourcePath, std::string &outE
         return false;
     }
 
-    std::string destPath = PlatformStorage::join(modsDir, info.fileName);
+    // Destination file name: never inherit the source basename blindly. A
+    // QR install arrives as qr-download.tmp, and the boot scan
+    // (scanDirectory) only enumerates *.ochpack -- a .tmp name installs
+    // fine in-session (the mod is registered from memory) and vanishes on
+    // restart, which is exactly the reported symptom (only qr-download.tmp
+    // left in mods/). Keep a real .ochpack name; otherwise derive one from
+    // the payload id, sanitized FAT-safe.
+    std::string destFileName = info.fileName;
+    {
+        std::string lower = destFileName;
+        for (char &c : lower)
+            c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+        const bool hasPackExt = lower.size() >= 8 &&
+                                lower.compare(lower.size() - 8, 8, ".ochpack") == 0;
+        if (!hasPackExt)
+        {
+            std::string stem;
+            if (!info.id.empty())
+                stem = info.id;
+            else if (!info.name.empty())
+                stem = info.name;
+            else
+            {
+                stem = info.fileName;
+                const std::size_t dot = stem.find_last_of('.');
+                if (dot != std::string::npos)
+                    stem = stem.substr(0, dot);
+            }
+            std::string safe;
+            for (char c : stem)
+            {
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')
+                    safe += c;
+                else if (c == ' ')
+                    safe += '_';
+            }
+            while (!safe.empty() && safe.front() == '.')
+                safe.erase(safe.begin());
+            if (safe.empty())
+                safe = "mod";
+            if (safe.size() > 64)
+                safe.resize(64);
+            destFileName = safe + ".ochpack";
+        }
+    }
+    std::string destPath = PlatformStorage::join(modsDir, destFileName);
 
     // Read source file data using OchPackReader for full optical disc & candidate support
     std::vector<unsigned char> data;
@@ -364,7 +411,10 @@ void ModManager::save()
         content += "\n";
     }
 
-    PlatformStorage::writeFile(path, content.data(), content.size());
+    if (!PlatformStorage::writeFile(path, content.data(), content.size()))
+    {
+        MC_LOG_ERROR("mods", "Failed to write mods config to %s\n", path.c_str());
+    }
 }
 
 void ModManager::onTick()
