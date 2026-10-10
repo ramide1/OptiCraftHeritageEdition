@@ -1932,3 +1932,42 @@ void Chunk::remapBlocks()
 		++blockSectionRevision[section];
 	}
 }
+
+void Chunk::addPendingTreePart(const PendingTreePart &part)
+{
+	pendingTreeParts.push_back(part);
+}
+
+void Chunk::trimPendingTreeParts(long_t nowTick, int_t playerX, int_t playerZ)
+{
+	const long_t TTL_TICKS = 6000LL; // 5 minutes at 20 ticks/sec
+	const int_t MAX_DIST = 128;
+
+	// Remove expired or too-far parts
+	auto it = pendingTreeParts.begin();
+	while (it != pendingTreeParts.end())
+	{
+		if (!it->valid)
+		{
+			it = pendingTreeParts.erase(it);
+			continue;
+		}
+		if (nowTick - it->createdGameTime > TTL_TICKS)
+		{
+			it = pendingTreeParts.erase(it);
+			continue;
+		}
+		// int_t squares of real world deltas (up to 60M) overflow int32, which
+		// is UB in C++17 and could wrap the sum negative -- keeping a far-away
+		// part alive and defeating the bound. Compare in 64 bits.
+		const long_t dx = static_cast<long_t>(playerX) - static_cast<long_t>(JavaArithmetic::intShl(it->originChunkX, 4));
+		const long_t dz = static_cast<long_t>(playerZ) - static_cast<long_t>(JavaArithmetic::intShl(it->originChunkZ, 4));
+		if (dx > MAX_DIST || dx < -MAX_DIST || dz > MAX_DIST || dz < -MAX_DIST ||
+		    dx * dx + dz * dz > static_cast<long_t>(MAX_DIST) * MAX_DIST)
+		{
+			it = pendingTreeParts.erase(it);
+			continue;
+		}
+		++it;
+	}
+}

@@ -240,8 +240,9 @@ void GuiSkinSelector::switchPack(int newPackIndex)
     currentSkinIndex = 0;
     scrollOffset = 0.0f;
 
-    if (mc != nullptr && mc->sndManager != nullptr)
-        mc->sndManager->playSoundFX("random.click", 1.0f, 1.1f);
+    // No click sound here: the pad/key callers below play it themselves, and
+    // the tab buttons are already sounded by GuiScreen::mouseClicked before
+    // actionPerformed() runs -- an internal one doubled the button press.
 
     initGui();
 }
@@ -327,6 +328,8 @@ void GuiSkinSelector::handleSpecializedMenuInput()
     {
         if (SkinManager::getPackCount() > 1)
         {
+            if (mc != nullptr && mc->sndManager != nullptr)
+                mc->sndManager->playSoundFX("random.click", 1.0f, 1.1f);
             switchPack(1 - currentPackIndex);
             return;
         }
@@ -402,6 +405,8 @@ void GuiSkinSelector::handleSpecializedMenuInput()
 
     if ((pad.pressed & (PLATFORM_TEXT_UP | PLATFORM_TEXT_DOWN)) != 0 && SkinManager::getPackCount() > 1)
     {
+        if (mc != nullptr && mc->sndManager != nullptr)
+            mc->sndManager->playSoundFX("random.click", 1.0f, 1.1f);
         switchPack(1 - currentPackIndex);
         return;
     }
@@ -459,7 +464,11 @@ void GuiSkinSelector::keyTyped(char_t c, int_t key)
     if (key == lwjgl::Keyboard::KEY_TAB)
     {
         if (SkinManager::getPackCount() > 1)
+        {
+            if (mc != nullptr && mc->sndManager != nullptr)
+                mc->sndManager->playSoundFX("random.click", 1.0f, 1.1f);
             switchPack(1 - currentPackIndex);
+        }
         return;
     }
 
@@ -476,7 +485,11 @@ void GuiSkinSelector::keyTyped(char_t c, int_t key)
     if (key == DS_KEY_L || key == DS_KEY_R)
     {
         if (SkinManager::getPackCount() > 1)
+        {
+            if (mc != nullptr && mc->sndManager != nullptr)
+                mc->sndManager->playSoundFX("random.click", 1.0f, 1.1f);
             switchPack(1 - currentPackIndex);
+        }
         return;
     }
 #endif
@@ -650,14 +663,10 @@ void GuiSkinSelector::actionPerformed(GuiButton *button)
     }
     else if (button->id == BUTTON_ID_PLAYER2)
     {
-        if (mc != nullptr && mc->sndManager != nullptr)
-            mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
         mc->displayGuiScreen(new GuiSkinSelector(this, true));
     }
     else if (button->id == BUTTON_ID_LOAD_SKINS)
     {
-        if (mc != nullptr && mc->sndManager != nullptr)
-            mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
         mc->displayGuiScreen(new GuiLoadSkinsMenu(this));
     }
     else if (button->id == BUTTON_ID_DELETE_SKIN)

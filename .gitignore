@@ -357,6 +357,7 @@ vendor/glfw-3.3.2.bin.WIN64/
 # ia shit
 .claude/
 .agents/
+specs/
 
 # all the shit plans made with ia (i hate vibecoding)
 CLAUDE.MD

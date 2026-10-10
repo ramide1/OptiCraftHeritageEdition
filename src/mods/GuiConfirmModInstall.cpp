@@ -38,9 +38,7 @@ void GuiConfirmModInstall::actionPerformed(GuiButton *button)
         bool ok = ModManager::getInstance().installModPack(packInfo.filePath, err);
         if (ok)
         {
-            if (mc != nullptr && mc->sndManager != nullptr)
-                mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
-
+            // No click sound here: GuiScreen already played it for this press.
             // Navigate back to the mod manager screen to see the newly installed mod
             mc->displayGuiScreen(new GuiMods(nullptr));
         }

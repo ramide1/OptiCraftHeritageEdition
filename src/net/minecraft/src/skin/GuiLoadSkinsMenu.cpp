@@ -44,8 +44,9 @@ void GuiLoadSkinsMenu::actionPerformed(GuiButton *button)
     if (!button->enabled)
         return;
 
-    if (mc != nullptr && mc->sndManager != nullptr)
-        mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
+    // No click sound here: GuiScreen::mouseClicked (mouse/touch) and the
+    // keyboard-activate path already play it before calling in, so a screen
+    // that plays it again double-sounds every press.
 
     if (button->id == 1) // USB
     {
@@ -102,7 +103,13 @@ void GuiLoadSkinsMenu::handleSpecializedMenuInput()
     if ((pad.pressed & PLATFORM_TEXT_TYPE) != 0) // Cross / Confirm
     {
         if (selectedButtonIndex >= 0 && selectedButtonIndex < static_cast<int>(controlList.size()))
+        {
+            // Direct actionPerformed() callers own the click (the mouse and
+            // keyboard-activate paths get theirs from GuiScreen first).
+            if (mc != nullptr && mc->sndManager != nullptr)
+                mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
             actionPerformed(controlList[selectedButtonIndex]);
+        }
     }
     else if ((pad.pressed & (PLATFORM_TEXT_BACK | PLATFORM_TEXT_CLOSE)) != 0) // Circle / Cancel
     {

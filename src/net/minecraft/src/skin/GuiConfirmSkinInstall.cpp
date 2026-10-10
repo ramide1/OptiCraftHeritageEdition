@@ -66,9 +66,7 @@ void GuiConfirmSkinInstall::actionPerformed(GuiButton *button)
         bool ok = SkinManager::installCustomSkin(sourcePath, skinName, err);
         if (ok)
         {
-            if (mc != nullptr && mc->sndManager != nullptr)
-                mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
-
+            // No click sound here: GuiScreen already played it for this press.
             if (previewTextureId >= 0 && mc != nullptr && mc->renderEngine != nullptr)
             {
                 mc->renderEngine->deleteTexture(previewTextureId);
@@ -120,7 +118,13 @@ void GuiConfirmSkinInstall::handleSpecializedMenuInput()
     if ((pad.pressed & PLATFORM_TEXT_TYPE) != 0) // Cross / Install
     {
         if (!controlList.empty())
+        {
+            // Direct actionPerformed() callers own the click (the mouse and
+            // keyboard-activate paths get theirs from GuiScreen first).
+            if (mc != nullptr && mc->sndManager != nullptr)
+                mc->sndManager->playSoundFX("random.click", 1.0f, 1.0f);
             actionPerformed(controlList[0]);
+        }
     }
     else if ((pad.pressed & (PLATFORM_TEXT_BACK | PLATFORM_TEXT_CLOSE)) != 0) // Circle / Cancel
     {

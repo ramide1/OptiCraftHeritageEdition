@@ -40,6 +40,29 @@ struct ChunkPositionEqual
 	bool operator()(const ChunkPosition &a, const ChunkPosition &b) const { return a.equals(b); }
 };
 
+// A tree that crosses a chunk border and whose neighbour chunk does not exist
+// yet parks the neighbour-side blocks here (spec 001 RF-3/RF-4). The origin
+// chunk owns the record; trimPendingTreeParts() drops it after a TTL or once
+// the player is too far, so the queue stays bounded (constitution #13).
+struct PendingTreePart
+{
+	int_t originChunkX = 0;
+	int_t originChunkZ = 0;
+	int_t treeType = 0;
+	int_t baseBlockX = 0;
+	int_t baseBlockY = 0;
+	int_t baseBlockZ = 0;
+	struct BlockPlacement
+	{
+		int_t x = 0, y = 0, z = 0;
+		int_t blockId = 0;
+		int_t metadata = 0;
+	};
+	std::vector<BlockPlacement> pendingBlocks;
+	long_t createdGameTime = 0;
+	bool valid = true;
+};
+
 // net.minecraft.src.Chunk
 class Chunk
 {
@@ -177,6 +200,11 @@ public:
 	long_t lastSaveTime;
 	long_t lastAccessTick;
 	std::uint32_t blockSectionRevision[SECTION_COUNT];
+
+	// Pending tree parts for cross-chunk tree generation (RF-3, RF-4)
+	std::vector<PendingTreePart> pendingTreeParts;
+	void addPendingTreePart(const PendingTreePart &part);
+	void trimPendingTreeParts(long_t nowTick, int_t playerX, int_t playerZ);
 
 private:
 	ExtendedBlockStorage *ensureBlockStorage(int_t sectionY);

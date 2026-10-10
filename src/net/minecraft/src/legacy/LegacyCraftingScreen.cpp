@@ -107,6 +107,34 @@ inline int_t iId(Item *it, int_t fallback)
     return it != nullptr ? it->shiftedIndex : fallback;
 }
 
+// A grid cell's display damage (gridItemDamage) is the RENDERED stack variant
+// -- oak planks (0) by default -- while the ingredient list is what actually
+// constrains crafting (-1 = any subtype). Recipes like sticks and the wooden
+// tools declare their plank ingredient with damage -1, so the cell showing an
+// oak plank must still accept spruce/birch/jungle; the variant recipes
+// (log->planks, coal/charcoal) pin an exact damage in BOTH tables and the
+// ingredient value wins there too. Both the multiplayer matrix placement and
+// the availability markers must ask the ingredient, not the display icon --
+// asking the icon made every plank recipe oak-only (the legacy crafting
+// report).
+inline int_t cellIngredientDamage(const RecipeVariant &recipe, int_t cellIndex)
+{
+    if (cellIndex < 0 || cellIndex >= 9)
+        return -1;
+    const int_t cellId = recipe.gridItemIds[cellIndex];
+    if (cellId > 0)
+    {
+        for (int_t i = 0; i < recipe.ingredientCount; ++i)
+        {
+            if (recipe.ingredients[i].itemId == cellId && recipe.ingredients[i].count > 0)
+                return recipe.ingredients[i].itemDamage;
+        }
+    }
+    // No ingredient entry for this cell (defensive; every registered recipe
+    // covers its cells): fall back to the display damage.
+    return recipe.gridItemDamage[cellIndex];
+}
+
 void initStaticRecipes()
 {
     if (s_recipesInitialized)
@@ -2160,7 +2188,9 @@ bool LegacyCraftingScreen::craftCurrentRecipeViaContainerClicks()
             const int_t wantId = recipe.gridItemIds[gy * recipe.gridWidth + gx];
             if (wantId <= 0)
                 continue;
-            const int_t wantDamage = recipe.gridItemDamage[gy * recipe.gridWidth + gx];
+            // The ingredient list owns the subtype rule (-1 = any), not the
+            // grid's display damage -- planks must accept every wood type.
+            const int_t wantDamage = cellIngredientDamage(recipe, gy * recipe.gridWidth + gx);
 
             int_t srcInvIdx = -1;
             for (int_t i = 0; i < 36; ++i)
@@ -2247,7 +2277,7 @@ void LegacyCraftingScreen::updateCraftingState()
             for (int s = 0; s < slotCount; ++s)
             {
                 if (v.gridStacks[s] != nullptr)
-                    m_cachedSlotHasIngredient[s] = playerHasIngredient(v.gridItemIds[s], v.gridItemDamage[s]);
+                    m_cachedSlotHasIngredient[s] = playerHasIngredient(v.gridItemIds[s], cellIngredientDamage(v, s));
                 else
                     m_cachedSlotHasIngredient[s] = true;
             }
