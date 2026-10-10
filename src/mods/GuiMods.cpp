@@ -9,6 +9,7 @@
 #include "GuiYesNo.h"
 #include "GuiLoadModsMenu.h"
 #include "mods/ModManager.h"
+#include "net/minecraft/src/UiStrings.h"
 
 #if PLATFORM_PS2 || PLATFORM_WII
 #include "platform/Input.h"
@@ -153,7 +154,7 @@ void GuiMods::setSelectedModIndex(int_t index)
 void GuiMods::initGui()
 {
     StringTranslate *tr = StringTranslate::getInstance();
-    screenTitle = "Mod Manager";
+    screenTitle = uiText("Mod Manager");
 
     delete slotList;
     slotList = new GuiSlotMods(this);
@@ -162,14 +163,14 @@ void GuiMods::initGui()
     controlList.clear();
 
     // Row 1 buttons
-    controlList.push_back(new GuiButton(101, width / 2 - 155, height - 48, 100, 20, "Load Mods"));
-    deleteButton = new GuiButton(102, width / 2 - 50, height - 48, 100, 20, "Delete Mod");
+    controlList.push_back(new GuiButton(101, width / 2 - 155, height - 48, 100, 20, uiText("Load Mods")));
+    deleteButton = new GuiButton(102, width / 2 - 50, height - 48, 100, 20, uiText("Delete Mod"));
     controlList.push_back(deleteButton);
-    settingsButton = new GuiButton(103, width / 2 + 55, height - 48, 100, 20, "Settings");
+    settingsButton = new GuiButton(103, width / 2 + 55, height - 48, 100, 20, uiText("Settings"));
     controlList.push_back(settingsButton);
 
     // Row 2 buttons
-    controlList.push_back(new GuiButton(100, width / 2 - 155, height - 25, 150, 20, "Texture Packs"));
+    controlList.push_back(new GuiButton(100, width / 2 - 155, height - 25, 150, 20, uiText("Texture Packs")));
     controlList.push_back(new GuiButton(200, width / 2 + 5, height - 25, 150, 20, tr->translateKey("gui.done")));
 
     setSelectedModIndex(selectedModIndex);
@@ -200,7 +201,7 @@ void GuiMods::actionPerformed(GuiButton *button)
         {
             std::string name = mods[selectedModIndex]->getName();
             std::string ver = mods[selectedModIndex]->getVersion();
-            mc->displayGuiScreen(new GuiYesNo(this, "Are you sure you want to delete this mod?", name + " (" + ver + ")", "Delete", "Cancel", 1));
+            mc->displayGuiScreen(new GuiYesNo(this, uiText("Are you sure you want to delete this mod?"), name + " (" + ver + ")", uiText("Delete"), uiText("Cancel"), 1));
         }
     }
     else if (button->id == 103) // Settings
@@ -264,8 +265,8 @@ void GuiMods::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 
     if (ModManager::getInstance().getMods().empty())
     {
-        drawCenteredString(fontRenderer, "No mods installed.", width / 2, height / 2 - 16, 0xAAAAAA);
-        drawCenteredString(fontRenderer, "Click 'Load Mods' to install .ochpack mods.", width / 2, height / 2, 0x777777);
+        drawCenteredString(fontRenderer, uiText("No mods installed."), width / 2, height / 2 - 16, 0xAAAAAA);
+        drawCenteredString(fontRenderer, uiText("Click 'Load Mods' to install .ochpack mods."), width / 2, height / 2, 0x777777);
     }
 
     GuiScreen::drawScreen(mouseX, mouseY, partialTick);

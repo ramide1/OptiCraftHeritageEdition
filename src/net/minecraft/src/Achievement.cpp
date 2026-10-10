@@ -4,6 +4,7 @@
 #include "Block.h"
 #include "ItemStack.h"
 #include "StatCollector.h"
+#include "StringTranslate.h"
 #include "IStatStringFormat.h"
 #include "AchievementList.h"
 
@@ -23,6 +24,7 @@ Achievement::Achievement(int_t i, const std::string &s, int_t j, int_t k, ItemSt
     displayRow(k),
     parentAchievement(achievement),
     theItemStack(itemstack),
+    achievementId(s),
     statStringFormatter(nullptr),
     isSpecialAchievement(false)
 {
@@ -67,6 +69,21 @@ std::string Achievement::getDescription()
     if (statStringFormatter != nullptr)
         return statStringFormatter->formatString(achievementDescription);
     return achievementDescription;
+}
+
+void Achievement::refreshTranslationFromId()
+{
+    if (achievementId.empty())
+        return;
+    // Re-read the name/description from the translation table so a language
+    // switch after startup applies to achievements that were created early
+    // (and frozen on the boot locale).
+    StringTranslate *tr = StringTranslate::getInstance();
+    if (tr != nullptr)
+    {
+        statName = tr->translateKey("achievement." + achievementId);
+        achievementDescription = tr->translateKey("achievement." + achievementId + ".desc");
+    }
 }
 
 Achievement* Achievement::setStatStringFormatter(IStatStringFormat *formatter)

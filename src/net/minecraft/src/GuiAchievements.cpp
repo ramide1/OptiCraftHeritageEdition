@@ -301,7 +301,10 @@ void GuiAchievements::drawAchievementsPanel(int_t i, int_t j, float_t f)
 	if (hoveredAchievement != nullptr)
 	{
 		Achievement *achievement2 = hoveredAchievement;
-		std::string s  = achievement2->statName;
+		// Re-translate name and description from the id so a language switch
+		// after startup applies (the constructor froze both to the boot locale).
+		achievement2->refreshTranslationFromId();
+		std::string s = achievement2->statName;
 		std::string s1 = achievement2->getDescription();
 		int_t k5 = i + 12;
 		int_t j6 = j - 4;

@@ -36,6 +36,7 @@ public:
 
 private:
     void scanPacks();
+    void translateStrings();
 
     GuiScreen *parentScreen;
     Source loadSource;

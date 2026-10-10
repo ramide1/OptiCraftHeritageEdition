@@ -31,6 +31,9 @@ constexpr int_t BUTTON_LEGACY_CREATIVE = 208;
 // The auto-jump toggle (see EntityPlayerSP::queueAutoJump): every platform,
 // the one row this screen adds outside the 3DS block below.
 constexpr int_t BUTTON_AUTO_JUMP = 212;
+// The toggle-sneak option (see GameSettings::toggleShift): available on all
+// platforms, not just 3DS. It lets players hold sneak by pressing the key once.
+constexpr int_t BUTTON_TOGGLE_SHIFT = 213;
 #if defined(CTR_PLATFORM)
 // The face-button camera toggle (see DsInput.cpp): the option only exists
 // on the 3DS, where it remaps gameplay controls; on the other platforms the
@@ -44,10 +47,7 @@ constexpr int_t BUTTON_TOUCH_COORDS = 211;
 // tap to place/swing, hold to break/use with the stylus. 3DS only. Shown as
 // "Touch Click"; the stored settings key stays pocketTouch so existing
 // options.txt files keep their value.
-constexpr int_t BUTTON_POCKET_TOUCH = 213;
-// The toggle-sneak option (see GameSettings::toggleShift): the option only
-// exists on the 3DS, paired with Touch Click in the same row.
-constexpr int_t BUTTON_TOGGLE_SHIFT = 214;
+constexpr int_t BUTTON_POCKET_TOUCH = 214;
 // The dual-screen HUD side swap (GameSettings::touchHudSwap): minimap to
 // the right edge, action buttons to the left (TouchHudLayout::swappedSides).
 // 3DS only, like the rest of this block.
@@ -95,14 +95,11 @@ void GuiOptiCraftOptions::initGui()
 		uiText("Legacy Creative: ") + std::string(settings->legacyCreative ? uiText("ON") : uiText("OFF"))));
 	by += 24;
 
-	// Row 3: Auto Jump, on every platform. Toggle Shift rides the row's
-	// right column on the 3DS (its old slot moved up from the touch block).
+	// Row 3: Auto Jump and Toggle Shift on every platform.
 	controlList.push_back(new GuiSmallButton(BUTTON_AUTO_JUMP, width / 2 - 155, by,
 		uiText("Auto Jump: ") + std::string(settings->autoJump ? uiText("ON") : uiText("OFF"))));
-#ifdef CTR_PLATFORM
 	controlList.push_back(new GuiSmallButton(BUTTON_TOGGLE_SHIFT, width / 2 + 5, by,
 		uiText("Toggle Shift: ") + std::string(settings->toggleShift ? uiText("ON") : uiText("OFF"))));
-#endif
 	by += 24;
 
 #if defined(CTR_PLATFORM)
@@ -283,6 +280,14 @@ void GuiOptiCraftOptions::actionPerformed(GuiButton *button)
 		settings->saveOptions();
 		return;
 	}
+	if (button->id == BUTTON_TOGGLE_SHIFT)
+	{
+		settings->toggleShift = !settings->toggleShift;
+		button->displayString = uiText("Toggle Shift: ") +
+			std::string(settings->toggleShift ? uiText("ON") : uiText("OFF"));
+		settings->saveOptions();
+		return;
+	}
 #if defined(CTR_PLATFORM)
 	if (button->id == BUTTON_FACE_CAMERA)
 	{
@@ -312,14 +317,6 @@ void GuiOptiCraftOptions::actionPerformed(GuiButton *button)
 		settings->setPocketTouch(!settings->pocketTouch);
 		button->displayString = uiText("Touch Click: ") +
 			std::string(settings->pocketTouch ? uiText("ON") : uiText("OFF"));
-		return;
-	}
-	if (button->id == BUTTON_TOGGLE_SHIFT)
-	{
-		settings->toggleShift = !settings->toggleShift;
-		button->displayString = uiText("Toggle Shift: ") +
-			std::string(settings->toggleShift ? uiText("ON") : uiText("OFF"));
-		settings->saveOptions();
 		return;
 	}
 	if (button->id == BUTTON_TOUCH_HUD_SWAP)

@@ -3,6 +3,7 @@
 #include "Minecraft.h"
 #include "FontRenderer.h"
 #include "GuiLoadModsList.h"
+#include "net/minecraft/src/UiStrings.h"
 
 #if PLATFORM_PS2 || PLATFORM_WII
 #include "platform/Input.h"
@@ -25,15 +26,15 @@ void GuiLoadModsMenu::initGui()
     // A y-cursor keeps the layout identical on the platforms that keep the
     // USB entry (28 px rows, then the 14 px breathing gap before Back).
     int_t nextY = startY;
-    controlList.push_back(new GuiButton(1, centerX, nextY, btnW, btnH, "Load from Device (Recommended)"));
+    controlList.push_back(new GuiButton(1, centerX, nextY, btnW, btnH, uiText("Load from Device (Recommended)")));
     nextY += 28;
 #if !defined(CTR_PLATFORM)
     // PS2/Wii mount USB mass storage; the 3DS has none, so the entry would
     // only open an empty (or failing) scan here.
-    controlList.push_back(new GuiButton(2, centerX, nextY, btnW, btnH, "Load from USB Storage"));
+    controlList.push_back(new GuiButton(2, centerX, nextY, btnW, btnH, uiText("Load from USB Storage")));
     nextY += 28;
 #endif
-    controlList.push_back(new GuiButton(3, centerX, nextY + 14, btnW, btnH, "Back"));
+    controlList.push_back(new GuiButton(3, centerX, nextY + 14, btnW, btnH, uiText("Back")));
 }
 
 void GuiLoadModsMenu::actionPerformed(GuiButton *button)
@@ -81,8 +82,8 @@ void GuiLoadModsMenu::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick
 {
     drawDefaultBackground();
 
-    drawCenteredString(fontRenderer, "Load Mods (.ochpack)", width / 2, 25, 0xFFFFFF);
-    drawCenteredString(fontRenderer, std::string("\xc2\xa7") + "7Select the storage location to scan for mods", width / 2, 40, 0x888888);
+    drawCenteredString(fontRenderer, uiText("Load Mods (.ochpack)"), width / 2, 25, 0xFFFFFF);
+    drawCenteredString(fontRenderer, std::string("\xc2\xa7") + "7" + uiText("Select the storage location to scan for mods"), width / 2, 40, 0x888888);
 
     GuiScreen::drawScreen(mouseX, mouseY, partialTick);
 }

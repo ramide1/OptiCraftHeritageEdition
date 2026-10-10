@@ -39,6 +39,14 @@ void GuiControls::initGui()
 		if (options->keyBindings[j] == options->keyBindToggleFog)
 			continue;
 #endif
+#if defined(CTR_PLATFORM)
+		// Movement keys are handled by the Circle Pad on 3DS, not keyboard.
+		if (options->keyBindings[j] == options->keyBindForward ||
+		    options->keyBindings[j] == options->keyBindLeft ||
+		    options->keyBindings[j] == options->keyBindBack ||
+		    options->keyBindings[j] == options->keyBindRight)
+		    continue;
+#endif
 		displayedBindings.push_back(j);
 	}
 

@@ -93,7 +93,11 @@ void GuiCreateWorld::initGui()
 
     delete textboxWorldName;
     textboxWorldName = new GuiTextField(this, fontRenderer, width / 2 - 100, 60, 200, 20, "");
+#ifndef CTR_PLATFORM
+    // Vanilla focuses the name field at open; on 3DS that auto-focus opens the
+    // software keyboard over the creation screen, so consoles skip it.
     textboxWorldName->setFocused(true);
+#endif
     textboxWorldName->setText(localizedNewWorldText);
 
     delete textboxSeed;
@@ -150,8 +154,8 @@ void GuiCreateWorld::updateButtonText()
     else if (worldSizeType == 2)
     {
         worldSizeButton->displayString = isEs
-            ? "Tamaño: Legacy 864x864"
-            : "World Size: Legacy 864x864";
+            ? "Tamaño: LCE 864x864"
+            : "World Size: LCE 864x864";
     }
 }
 

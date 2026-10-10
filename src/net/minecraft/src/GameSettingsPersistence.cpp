@@ -151,6 +151,8 @@ void GameSettings::loadOptions()
 					renderDistance = platformGameSettingsClampRenderDistance(parseIntJava(value));
 					ofRenderDistanceFine = JavaArithmetic::intShl(32, JavaArithmetic::intSub(3, renderDistance));
 				}
+				if (key == "showFps")
+					showFps = value == "true";
 				if (key == "guiScale")
 					guiScale = parseIntJava(value);
 				if (key == "particles")
@@ -437,6 +439,7 @@ void GameSettings::saveOptions()
 	std::unordered_set<std::string> knownKeys = {
 		"music", "sound", "invertYMouse", "mouseSensitivity", "fov", "viewDistance",
 		"guiScale", "particles", "bobView", "anaglyph3d", "advancedOpengl", "fpsLimit",
+		"showFps",
 		"difficulty", "fancyGraphics", "ao", "skin", "lastServer", "lang", "playerName", "serverVersion", "selectedSkin", "selectedSkinP2", "legacyUI",
 		"legacyLook", "legacyCrafting", "legacyCreative", "autoJump", "legacyGuiScaleRestore",
 		"alternativeControllerLayout", "wiiAlternativeControls", "controllerDeadzone", "wiiStickDeadzone",
@@ -502,6 +505,7 @@ void GameSettings::saveOptions()
 	printwriter << "mouseSensitivity:" << mouseSensitivity << "\n";
 	printwriter << "fov:" << fovSetting << "\n";
 	printwriter << "viewDistance:" << renderDistance << "\n";
+	printwriter << "showFps:" << (showFps ? "true" : "false") << "\n";
 	printwriter << "guiScale:" << guiScale << "\n";
 	printwriter << "particles:" << particleSetting << "\n";
 	printwriter << "bobView:" << (viewBobbing ? "true" : "false") << "\n";

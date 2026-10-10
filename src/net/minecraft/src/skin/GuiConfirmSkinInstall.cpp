@@ -10,6 +10,7 @@
 #include "platform/RenderAPI.h"
 #include "Tessellator.h"
 #include "stb_image.h"
+#include "net/minecraft/src/UiStrings.h"
 
 #if PLATFORM_PS2 || PLATFORM_WII
 #include "platform/Input.h"
@@ -31,8 +32,8 @@ void GuiConfirmSkinInstall::initGui()
 {
     controlList.clear();
 
-    controlList.push_back(new GuiButton(1, width / 2 - 155, height / 4 + 115, 150, 20, "Install Skin"));
-    controlList.push_back(new GuiButton(2, width / 2 + 5, height / 4 + 115, 150, 20, "Cancel"));
+    controlList.push_back(new GuiButton(1, width / 2 - 155, height / 4 + 115, 150, 20, uiText("Install Skin")));
+    controlList.push_back(new GuiButton(2, width / 2 + 5, height / 4 + 115, 150, 20, uiText("Cancel")));
 
     // Pre-load texture for front preview if not already loaded
     if (previewTextureId < 0 && mc != nullptr && mc->renderEngine != nullptr)
@@ -197,7 +198,7 @@ void GuiConfirmSkinInstall::drawScreen(int_t mouseX, int_t mouseY, float_t parti
 {
     drawDefaultBackground();
 
-    drawCenteredString(fontRenderer, "Install Custom Skin", width / 2, height / 4 - 20, 0xFFFFFF);
+    drawCenteredString(fontRenderer, uiText("Install Custom Skin"), width / 2, height / 4 - 20, 0xFFFFFF);
     drawCenteredString(fontRenderer, skinName, width / 2, height / 4 - 4, 0xFFFF55);
 
     // Draw front preview of the skin
@@ -210,7 +211,7 @@ void GuiConfirmSkinInstall::drawScreen(int_t mouseX, int_t mouseY, float_t parti
              static_cast<int_t>(px + pw + 6), static_cast<int_t>(py + ph + 4), 0xFF282828);
     drawFrontPreview(px, py, pw, ph);
 
-    drawCenteredString(fontRenderer, "Will be saved to: " + SkinManager::getSkinsDir(), width / 2, height / 4 + 92, 0x888888);
+    drawCenteredString(fontRenderer, uiText("Will be saved to: ") + SkinManager::getSkinsDir(), width / 2, height / 4 + 92, 0x888888);
 
     if (!statusMessage.empty())
     {

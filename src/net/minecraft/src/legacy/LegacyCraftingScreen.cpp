@@ -2523,8 +2523,8 @@ void LegacyCraftingScreen::drawScreen(int_t mouseX, int_t mouseY, float_t partia
     // 1.6 Lower Section: Grid & Labels & Result Slot
     if (activeVariant != nullptr)
     {
-        fontRenderer->drawString(activeVariant->name ? activeVariant->name : "Recipe", matrixX, panelTop + 50, 0x303030);
-        fontRenderer->drawString("Inventory", invX, panelTop + 50, 0x303030);
+        fontRenderer->drawString(activeVariant->name ? activeVariant->name : StringTranslate::getInstance()->translateUi("Recipe"), matrixX, panelTop + 50, 0x303030);
+        fontRenderer->drawString(StringTranslate::getInstance()->translateUi("Inventory"), invX, panelTop + 50, 0x303030);
 
         const int rows = is2x2Mode ? 2 : 3;
         const int cols = is2x2Mode ? 2 : 3;
@@ -2568,20 +2568,20 @@ void LegacyCraftingScreen::drawScreen(int_t mouseX, int_t mouseY, float_t partia
         if (canCraft)
         {
 #if PLATFORM_PS2
-            fontRenderer->drawString("Ready [Cross]", matrixX, statusY, 0x207820);
+            fontRenderer->drawString(StringTranslate::getInstance()->translateUi("Ready [Cross]"), matrixX, statusY, 0x207820);
 #elif PLATFORM_WII
-            fontRenderer->drawString("Ready [A]", matrixX, statusY, 0x207820);
+            fontRenderer->drawString(StringTranslate::getInstance()->translateUi("Ready [A]"), matrixX, statusY, 0x207820);
 #else
-            fontRenderer->drawString("Ready [Enter]", matrixX, statusY, 0x207820);
+            fontRenderer->drawString(StringTranslate::getInstance()->translateUi("Ready [Enter]"), matrixX, statusY, 0x207820);
 #endif
         }
         else if (is2x2Mode && activeVariant->requiresWorkbench)
         {
-            fontRenderer->drawString("Needs Crafting Table", matrixX, statusY, 0x902020);
+            fontRenderer->drawString(StringTranslate::getInstance()->translateUi("Needs Crafting Table"), matrixX, statusY, 0x902020);
         }
         else
         {
-            fontRenderer->drawString("Missing Items", matrixX, statusY, 0x902020);
+            fontRenderer->drawString(StringTranslate::getInstance()->translateUi("Missing Items"), matrixX, statusY, 0x902020);
         }
     }
 

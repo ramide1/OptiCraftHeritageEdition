@@ -235,6 +235,16 @@ int TileEntityFurnace::getItemBurnTime(ItemStack* itemstack) {
     if (i == Item::doorWood->shiftedIndex) {
         return 300; // Wooden door burns like wood
     }
+    if (i == Item::sign->shiftedIndex) {
+        return 200; // Wooden sign burns like wood
+    }
+    // Wooden tools (shovel, pickaxe, axe, hoe, sword of wood) also burn like wood
+    if (i == Item::shovelWood->shiftedIndex || i == Item::pickaxeWood->shiftedIndex ||
+        i == Item::axeWood->shiftedIndex || i == Item::hoeWood->shiftedIndex ||
+        i == Item::swordWood->shiftedIndex)
+    {
+        return 200; // Vanilla 1.2.5: wooden tools burn 200 ticks
+    }
     if (i < 256 && Block::blocksList[i]->blockMaterial == Material::wood) {
         return 300;
     }

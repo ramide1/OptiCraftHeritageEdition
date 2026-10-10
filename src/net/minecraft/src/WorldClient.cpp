@@ -7,6 +7,7 @@
 
 #include "Chunk.h"
 #include "ChunkCoordinates.h"
+#include "Config.h"
 #include "ChunkCoordIntPair.h"
 #include "ChunkProviderClient.h"
 #include "Entity.h"
@@ -258,8 +259,8 @@ void WorldClient::tick()
 		const int_t cx = MathHelper::floor_double(playerEntities[0]->posX / 16.0);
 		const int_t cz = MathHelper::floor_double(playerEntities[0]->posZ / 16.0);
 		int resident = 0, pending = 0, missing = 0;
-		for (int dz = -PLATFORM_CHUNK_CACHE_RADIUS; dz <= PLATFORM_CHUNK_CACHE_RADIUS; ++dz)
-		for (int dx = -PLATFORM_CHUNK_CACHE_RADIUS; dx <= PLATFORM_CHUNK_CACHE_RADIUS; ++dx)
+		for (int dz = -Config::getActiveChunkCacheRadius(); dz <= Config::getActiveChunkCacheRadius(); ++dz)
+		for (int dx = -Config::getActiveChunkCacheRadius(); dx <= Config::getActiveChunkCacheRadius(); ++dx)
 		{
 			if (clientChunkProvider->hasChunk(cx + dx, cz + dz)) { ++resident; continue; }
 			const auto entry = deferredChunks.find(ChunkCoordIntPair::chunkXZ2Long(cx + dx, cz + dz));
@@ -609,7 +610,7 @@ void WorldClient::rematerializeStashedChunks()
 	{
 		const int_t cx = pair.second.chunkX;
 		const int_t cz = pair.second.chunkZ;
-		if (getChunkDistance(cx, cz, centerX, centerZ) <= PLATFORM_CHUNK_UNLOAD_RADIUS - 1 &&
+		if (getChunkDistance(cx, cz, centerX, centerZ) <= Config::getActiveChunkUnloadRadius() - 1 &&
 		    !clientChunkProvider->hasChunk(cx, cz))
 			toReimport.push_back(pair.first);
 		// Columns back inside the LIVE radius get re-imported before the
@@ -791,7 +792,7 @@ void WorldClient::enforceDeferredChunkBudget()
         victims.push_back({
             pair.first,
             !candidate.compressed.empty(),
-            havePlayer && distance <= static_cast<long_t>(PLATFORM_CHUNK_UNLOAD_RADIUS),
+            havePlayer && distance <= static_cast<long_t>(Config::getActiveChunkUnloadRadius()),
             clientChunkProvider != nullptr && clientChunkProvider->hasChunk(candidate.chunkX, candidate.chunkZ),
             distance,
             candidate.stamp
@@ -1121,9 +1122,9 @@ bool WorldClient::shouldKeepChunk(int_t chunkX, int_t chunkZ) const
 	// The active promotion window is the cache radius. The unload radius is only
 	// hysteresis for columns that were already resident before the player moved;
 	// using it here expands a nominal 5x5 PS2 working set into 7x7 in multiplayer.
-	return getChunkDistance(chunkX, chunkZ, centerX, centerZ) <= PLATFORM_CHUNK_CACHE_RADIUS;
+	return getChunkDistance(chunkX, chunkZ, centerX, centerZ) <= Config::getActiveChunkCacheRadius();
 #else
-	return getChunkDistance(chunkX, chunkZ, centerX, centerZ) <= PLATFORM_CHUNK_UNLOAD_RADIUS;
+	return getChunkDistance(chunkX, chunkZ, centerX, centerZ) <= Config::getActiveChunkUnloadRadius();
 #endif
 #else
 	(void)chunkX;
@@ -1152,7 +1153,7 @@ void WorldClient::trimClientChunkCache()
 	const EntityPlayer *player = playerEntities[0];
 	const int_t centerX = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posX)), 4);
 	const int_t centerZ = JavaArithmetic::intShr(JavaArithmetic::doubleToInt(std::floor(player->posZ)), 4);
-	clientChunkProvider->unloadOutsideRadius(centerX, centerZ, PLATFORM_CHUNK_UNLOAD_RADIUS);
+	clientChunkProvider->unloadOutsideRadius(centerX, centerZ, Config::getActiveChunkUnloadRadius());
 #endif
 }
 

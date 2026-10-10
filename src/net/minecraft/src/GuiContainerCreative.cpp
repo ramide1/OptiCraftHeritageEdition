@@ -18,6 +18,7 @@
 #include "RenderEngine.h"
 #include "Slot.h"
 #include "StatCollector.h"
+#include "StringTranslate.h"
 #include "Block.h"
 #if defined(CTR_PLATFORM)
 #include "3ds/input/DsPadKeyCodes.h"
@@ -42,13 +43,14 @@ InventoryBasic GuiContainerCreative::inventory("tmp", 72, false);
 ItemStack *GuiContainerCreative::s_tabIcons[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 RenderItem *GuiContainerCreative::creativeItemRenderer = new RenderItem();
 
+// Translation keys for creative tabs (vanilla 1.2.5 keys)
 static const char *s_creativeTabNames[6] = {
-    "Building Blocks",
-    "Decoration",
-    "Redstone & Transport",
-    "Materials & Misc",
-    "Food & Alchemy",
-    "Tools, Weapons & Armor"
+    "creativeTab.blocks",
+    "creativeTab.decorations",
+    "creativeTab.redstone",
+    "creativeTab.misc",
+    "creativeTab.food",
+    "creativeTab.combat"
 };
 
 GuiContainerCreative::GuiContainerCreative(EntityPlayer *player)
@@ -504,7 +506,11 @@ void GuiContainerCreative::drawScreen(int_t mouseX, int_t mouseY, float_t partia
             int_t tabX = tabStartX + t * 27;
             if (mouseX >= tabX && mouseX < tabX + 27)
             {
-                drawCreativeTabTooltip(s_creativeTabNames[t], mouseX, mouseY);
+                // Translate the tab key (creativeTab.*) so Spanish locales show
+                // the localized name instead of the raw key.
+                StringTranslate *tr = StringTranslate::getInstance();
+                std::string tip = (tr != nullptr) ? tr->translateKey(s_creativeTabNames[t]) : s_creativeTabNames[t];
+                drawCreativeTabTooltip(tip.c_str(), mouseX, mouseY);
                 break;
             }
         }
@@ -519,8 +525,20 @@ void GuiContainerCreative::drawGuiContainerForegroundLayer()
     ContainerCreative *container = static_cast<ContainerCreative *>(inventorySlots);
     const bool legacyCreativeEnabled = (mc == nullptr || mc->gameSettings == nullptr || mc->gameSettings->legacyCreative);
     const int_t curTab = container ? container->getCategory() : 0;
-    const char *title = (legacyCreativeEnabled && curTab >= 0 && curTab < 6) ? s_creativeTabNames[curTab] : "Creative";
-    fontRenderer->drawString(title, 8, 6, 0x404040);
+
+    std::string title;
+    if (legacyCreativeEnabled && curTab >= 0 && curTab < 6)
+    {
+        // Resolve via the translation table (es_AR / es_ES / etc.) instead of
+        // the frozen English strings the tab array was built with.
+        StringTranslate *tr = StringTranslate::getInstance();
+        title = (tr != nullptr) ? tr->translateKey(s_creativeTabNames[curTab]) : s_creativeTabNames[curTab];
+    }
+    else
+    {
+        title = "Creative";
+    }
+    fontRenderer->drawString(title.c_str(), 8, 6, 0x404040);
 }
 
 void GuiContainerCreative::drawGuiContainerBackgroundLayer(float_t)

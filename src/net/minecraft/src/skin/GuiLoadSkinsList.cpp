@@ -10,6 +10,7 @@
 #include "platform/RenderAPI.h"
 #include "Tessellator.h"
 #include "stb_image.h"
+#include "net/minecraft/src/UiStrings.h"
 
 #ifdef PS2_PLATFORM
 #include "ps2/storage/assets/Ps2Assets.h"
@@ -267,11 +268,11 @@ void GuiLoadSkinsList::initGui()
     int_t btnH = 20;
     int_t btnY = height - 28;
 
-    GuiButton *btnInstall = new GuiButton(1, width / 2 - btnW - 10, btnY, btnW, btnH, "Install Skin");
+    GuiButton *btnInstall = new GuiButton(1, width / 2 - btnW - 10, btnY, btnW, btnH, uiText("Install Skin"));
     btnInstall->enabled = (selectedIndex >= 0 && selectedIndex < static_cast<int>(availableSkins.size()));
     controlList.push_back(btnInstall);
 
-    controlList.push_back(new GuiButton(2, width / 2 + 10, btnY, btnW, btnH, "Back"));
+    controlList.push_back(new GuiButton(2, width / 2 + 10, btnY, btnW, btnH, uiText("Back")));
 }
 
 void GuiLoadSkinsList::actionPerformed(GuiButton *button)
@@ -425,9 +426,9 @@ void GuiLoadSkinsList::drawScreen(int_t mouseX, int_t mouseY, float_t partialTic
 
         drawCenteredString(fontRenderer, skin.displayName, cx, previewTop + 10, 0xFFFF55);
 
-        std::string dimDesc = (skin.height == 64) ? "64x64 (Modern)" : "64x32 (Classic)";
+        std::string dimDesc = (skin.height == 64) ? uiText("64x64 (Modern)") : uiText("64x32 (Classic)");
         drawCenteredString(fontRenderer, dimDesc, cx, previewTop + 24, 0xAAAAAA);
-        drawCenteredString(fontRenderer, "Size: " + skin.fileSizeStr, cx, previewTop + 36, 0x888888);
+        drawCenteredString(fontRenderer, uiText("Size: ") + skin.fileSizeStr, cx, previewTop + 36, 0x888888);
 
         // Draw character standing front
         float pw = 36.0f;
@@ -442,7 +443,7 @@ void GuiLoadSkinsList::drawScreen(int_t mouseX, int_t mouseY, float_t partialTic
     else
     {
         int_t cx = (previewLeft + previewRight) / 2;
-        drawCenteredString(fontRenderer, "Select a skin to preview", cx, (previewTop + previewBottom) / 2, 0x777777);
+        drawCenteredString(fontRenderer, uiText("Select a skin to preview"), cx, (previewTop + previewBottom) / 2, 0x777777);
     }
 
     if (!controlList.empty())

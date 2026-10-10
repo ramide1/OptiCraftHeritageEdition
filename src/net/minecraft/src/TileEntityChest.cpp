@@ -257,5 +257,20 @@ void TileEntityChest::invalidate()
 {
 	updateContainingBlockInfo();
 	checkForAdjacentChests();
+	// Symmetric teardown: a dying double-chest half must not leave its twin
+	// holding a non-null pointer back to it. The renderer's "the negative half
+	// draws nothing" test only reads that pointer, so a stale one keeps the
+	// surviving chest permanently invisible -- one half of the double chest
+	// gone after a chunk unload/reload. Clear the side of each neighbour that
+	// used to point here; the survivor then checks again lazily and re-pairs
+	// when the chunk returns.
+	if (adjacentChestZNeg != nullptr && adjacentChestZNeg != this)
+		adjacentChestZNeg->adjacentChestZPos = nullptr;
+	if (adjacentChestZPos != nullptr && adjacentChestZPos != this)
+		adjacentChestZPos->adjacentChestZNeg = nullptr;
+	if (adjacentChestXNeg != nullptr && adjacentChestXNeg != this)
+		adjacentChestXNeg->adjacentChestXPos = nullptr;
+	if (adjacentChestXPos != nullptr && adjacentChestXPos != this)
+		adjacentChestXPos->adjacentChestXNeg = nullptr;
 	TileEntity::invalidate();
 }

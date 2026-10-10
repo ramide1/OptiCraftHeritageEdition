@@ -116,11 +116,6 @@ void LegacyCreateWorldScreen::initGui()
     updateDifficultyControl();
     updateControlVisibility();
     selectControl(0);
-#if PLATFORM_PS2 || PLATFORM_WII || defined(CTR_PLATFORM)
-    // Preserve the console's existing initial text-entry behavior. Once the user
-    // closes the keyboard, focus stays off until row 0 is activated again.
-    textboxWorldName->setFocused(true);
-#endif
 }
 
 void LegacyCreateWorldScreen::updateControlVisibility()
@@ -130,7 +125,7 @@ void LegacyCreateWorldScreen::updateControlVisibility()
     generateStructuresButton->enabled2 = moreOptions;
     worldTypeButton->enabled2 = moreOptions;
     if (worldSizeButton != nullptr)
-        worldSizeButton->enabled2 = true;
+        worldSizeButton->enabled2 = !moreOptions;
 }
 
 void LegacyCreateWorldScreen::updateDifficultyControl()
@@ -381,6 +376,21 @@ void LegacyCreateWorldScreen::updateScreen()
         mc->sndManager->playSoundFX("random.back", 1.0f, 1.0f);
         mc->displayGuiScreen(parentScreen);
     }
+#elif defined(CTR_PLATFORM)
+    if ((pad.pressed & PLATFORM_TEXT_BACK) != 0)
+    {
+        if (moreOptions)
+        {
+            mc->sndManager->playSoundFX("random.back", 1.0f, 1.0f);
+            updateControlVisibility();
+            selectControl(4); // Focus the "More Options" button
+        }
+        else
+        {
+            mc->sndManager->playSoundFX("random.back", 1.0f, 1.0f);
+            mc->displayGuiScreen(parentScreen);
+        }
+    }
 #endif
 #endif
 }
@@ -437,6 +447,13 @@ void LegacyCreateWorldScreen::keyTyped(char_t c, int_t key)
             field->setFocused(false);
             hoveredControlIndex = -1;
             syncSelectedControl();
+            return;
+        }
+        if (moreOptions)
+        {
+            mc->sndManager->playSoundFX("random.back", 1.0f, 1.0f);
+            updateControlVisibility();
+            selectControl(4); // Focus the "More Options" button
             return;
         }
         mc->sndManager->playSoundFX("random.back", 1.0f, 1.0f);

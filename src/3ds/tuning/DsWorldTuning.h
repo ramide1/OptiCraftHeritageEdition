@@ -35,12 +35,13 @@
 // The lever the renderer grid actually reads on this path. RenderGlobal sizes
 // its grid from Config::getRenderDistanceFine(), GameSettings clamps that
 // fine value to PLATFORM_VISIBLE_CHUNK_RADIUS * 16 (GameSettingsBackend_3DS),
-// and EntityRenderer draws the fog edge at the same figure -- so radius 2
-// pins grid, fog and the fine slider to 32 blocks, 5 columns wide
-// (2*32/16+1). Coherent with TINY above: the coarse table maps TINY to
-// 32 << (3 - 3) = 32 blocks.
+// and EntityRenderer draws the fog edge at the same figure. Radius 4 lets the
+// user RAISE the view to 64 blocks (SHORT, 9 columns wide): the option cycles
+// TINY <-> SHORT and every pinned-is-TINY surface below stays the default
+// unless the player picks it. Coherent with TINY above: the coarse table maps
+// TINY to 32 << (3 - 3) = 32 blocks; SHORT maps to 64.
 #undef  PLATFORM_VISIBLE_CHUNK_RADIUS
-#define PLATFORM_VISIBLE_CHUNK_RADIUS              2
+#define PLATFORM_VISIBLE_CHUNK_RADIUS              4
 
 // Moving vertical renderer window, the PS2's 5x3x5 idea at TINY proportions.
 // The desktop branch of RenderGlobal::markRenderersForNewPosition() centers
@@ -100,7 +101,11 @@
 // (radius 2) instead of the visible+1 rule this header used to quote, the
 // unload ring stays one chunk beyond as hysteresis so walking a boundary
 // does not churn, and the map reserve follows -- 25 mandatory / 49 maximum
-// resident columns instead of 49/81, ~2 MB less world held.
+// resident columns instead of 49/81, ~2 MB less world held. With the view
+// distance now user-raisable past TINY these stay as floors: the chunk
+// providers re-derive both radii from the live fine distance every frame
+// (the Config::getActiveChunk*Radius helpers), so SHORT tracks 4/5 columns
+// per side instead of self-evicting visible terrain.
 //
 // The cost is the PS2's own documented trade: EntityRenderer's prefetch
 // clamps its radius to this cache, so a chunk now enters the generation

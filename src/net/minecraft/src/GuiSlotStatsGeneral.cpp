@@ -6,6 +6,7 @@
 #include "FontRenderer.h"
 #include "Minecraft.h"
 #include "Tessellator.h"
+#include "UiStrings.h"
 
 GuiSlotStatsGeneral::GuiSlotStatsGeneral(GuiStats *guistats)
 	: GuiSlot(GuiStats::getMc(guistats), guistats->width, guistats->height, 32, guistats->height - 64, 10)
@@ -44,7 +45,9 @@ void GuiSlotStatsGeneral::drawSlot(int_t i, int_t x, int_t y, int_t h, Tessellat
 	FontRenderer *fr   = GuiStats::getFontRenderer(parentGui);
 	StatFileWriter *sfw = GuiStats::getStatFileWriter(parentGui);
 	int_t color = (i % 2 != 0) ? 0x909090 : 0xffffff;
-	parentGui->drawString(fr, statbase->statName, x + 2, y + 1, color);
+	// statName is baked at StatList init (before the GUI language applies);
+	// route it through uiText so the Spanish fallbacks still translate it.
+	parentGui->drawString(fr, uiText(statbase->statName), x + 2, y + 1, color);
 	std::string s = statbase->format(sfw->writeStat(statbase));
 	parentGui->drawString(fr, s, (x + 2 + 213) - fr->getStringWidth(s), y + 1, color);
 }

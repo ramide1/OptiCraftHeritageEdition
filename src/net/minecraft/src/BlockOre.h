@@ -10,6 +10,7 @@ public:
 	int_t idDropped(int_t i, Random &random, int_t fortune) override;
 	int_t quantityDropped(Random &random) override;
 	int_t quantityDroppedWithBonus(int_t fortune, Random &random) override;
+	int_t getExpDrop(IBlockAccess *iblockaccess, int_t metadata, int_t fortune) override;
 
 protected:
 	int_t damageDropped(int_t i) override;

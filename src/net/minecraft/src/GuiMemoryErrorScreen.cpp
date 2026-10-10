@@ -41,11 +41,11 @@ void GuiMemoryErrorScreen::drawScreen(int_t mouseX, int_t mouseY, float_t partia
     drawString(fontRenderer, uiText("Minecraft has run out of memory."), baseX, baseY, 0xa0a0a0);
     drawString(fontRenderer, uiText("This could be caused by a bug in the game or by the"), baseX, baseY + 18, 0xa0a0a0);
     drawString(fontRenderer, uiText("Java Virtual Machine not being allocated enough"), baseX, baseY + 27, 0xa0a0a0);
-    drawString(fontRenderer, "memory. If you are playing in a web browser, try", baseX, baseY + 36, 0xa0a0a0);
-    drawString(fontRenderer, "downloading the game and playing it offline.", baseX, baseY + 45, 0xa0a0a0);
+    drawString(fontRenderer, uiText("memory. If you are playing in a web browser, try"), baseX, baseY + 36, 0xa0a0a0);
+    drawString(fontRenderer, uiText("downloading the game and playing it offline."), baseX, baseY + 45, 0xa0a0a0);
     drawString(fontRenderer, uiText("To prevent level corruption, the current game has quit."), baseX, baseY + 63, 0xa0a0a0);
     drawString(fontRenderer, uiText("We've tried to free up enough memory to let you go back to"), baseX, baseY + 81, 0xa0a0a0);
-    drawString(fontRenderer, "the main menu and back to playing, but this may not have worked.", baseX, baseY + 90, 0xa0a0a0);
+    drawString(fontRenderer, uiText("the main menu and back to playing, but this may not have worked."), baseX, baseY + 90, 0xa0a0a0);
     drawString(fontRenderer, uiText("Please restart the game if you see this message again."), baseX, baseY + 99, 0xa0a0a0);
     GuiScreen::drawScreen(mouseX, mouseY, partialTick);
 }

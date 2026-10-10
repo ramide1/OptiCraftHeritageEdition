@@ -124,8 +124,9 @@ namespace
 
         const int rendererDiameter = blocks / 16 + 1;
         int radius = rendererDiameter / 2 + 1;
-        if (radius > PLATFORM_CHUNK_CACHE_RADIUS)
-            radius = PLATFORM_CHUNK_CACHE_RADIUS;
+        const int cacheRadius = Config::getActiveChunkCacheRadius();
+        if (radius > cacheRadius)
+            radius = cacheRadius;
         return radius;
     }
 

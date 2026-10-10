@@ -162,6 +162,7 @@ public:
 	virtual void setBlockBoundsForItemRender();
 	virtual float getAmbientOcclusionLightValue(IBlockAccess *iblockaccess, int_t i, int_t j, int_t k);
 	virtual void harvestBlock(World *world, EntityPlayer *entityplayer, int_t i, int_t j, int_t k, int_t l);
+	virtual int_t getExpDrop(IBlockAccess *iblockaccess, int_t metadata, int_t fortune);
 	virtual bool canBlockStay(World *world, int_t i, int_t j, int_t k);
 	virtual void onBlockPlacedBy(World *world, int_t i, int_t j, int_t k, EntityLiving *entityliving);
 	virtual Block *setBlockName(const char *s);

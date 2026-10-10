@@ -145,7 +145,8 @@ void RenderItem::doRenderItem(EntityItem* entityitem, double d, double d1, doubl
                 float f9 = ((random.nextFloat() * 2.0f - 1.0f) * 0.2f) / f4;
                 renderTranslate(f5, f7, f9);
             }
-            renderBlocks->renderBlockOnInventory(Block::blocksList[itemstack->itemID], itemstack->getItemDamage(), 1.0f);
+            renderBlocks->renderBlockOnInventory(Block::blocksList[itemstack->itemID], itemstack->getItemDamage(),
+                entityitem->getEntityBrightness(f1));
             renderPopMatrix();
         }
     } else {

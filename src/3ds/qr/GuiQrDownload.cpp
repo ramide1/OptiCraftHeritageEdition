@@ -196,14 +196,14 @@ void GuiQrDownload::addScannedServer()
 	// for a friendlier one, and the list shows both fields anyway.
 	if (GuiMultiplayer::addServerAndSave(scannedUrl, scannedUrl, error))
 	{
-		message = "Server added to the multiplayer list";
+		message = uiText("Server added to the multiplayer list");
 		detail.clear();
 		messageIsError = false;
 		state = State::Done;
 	}
 	else
 	{
-		message = "The server could not be added";
+		message = uiText("The server could not be added");
 		detail = error;
 		messageIsError = true;
 		state = State::Failed;
@@ -341,13 +341,13 @@ void GuiQrDownload::runInstall()
 		std::string installError;
 		if (SkinManager::installCustomSkin(downloadPath, installName, installError))
 		{
-			message = "Skin installed and selected";
+			message = uiText("Skin installed and selected");
 			messageIsError = false;
 			state = State::Done;
 		}
 		else
 		{
-			message = "The skin could not be installed";
+			message = uiText("The skin could not be installed");
 			detail = installError;
 			state = State::Failed;
 		}
@@ -357,7 +357,7 @@ void GuiQrDownload::runInstall()
 		std::string convertError;
 		if (!DsAssetConvert::convertTexturePackZip(downloadPath, convertError))
 		{
-			message = "Could not convert the texture pack for this console";
+			message = uiText("Could not convert the texture pack for this console");
 			detail = convertError;
 			state = State::Failed;
 			rebuildButtons();
@@ -370,7 +370,7 @@ void GuiQrDownload::runInstall()
 		std::remove(finalPath.c_str());
 		if (std::rename(downloadPath.c_str(), finalPath.c_str()) != 0)
 		{
-			message = "The texture pack could not be saved";
+			message = uiText("The texture pack could not be saved");
 			detail = packsDir;
 			state = State::Failed;
 			rebuildButtons();
@@ -378,8 +378,8 @@ void GuiQrDownload::runInstall()
 		}
 		if (mc != nullptr && mc->texturePackList != nullptr)
 			mc->texturePackList->updateAvailableTexturePacks();
-		message = "Texture pack installed";
-		detail = "Select it in Options > Texture Packs";
+		message = uiText("Texture pack installed");
+		detail = uiText("Select it in Options > Texture Packs");
 		messageIsError = false;
 		state = State::Done;
 	}
@@ -388,20 +388,20 @@ void GuiQrDownload::runInstall()
 		std::string installError;
 		if (ModManager::getInstance().installModPack(downloadPath, installError))
 		{
-			message = "Mod installed";
+			message = uiText("Mod installed");
 			messageIsError = false;
 			state = State::Done;
 		}
 		else
 		{
-			message = "The mod could not be installed";
+			message = uiText("The mod could not be installed");
 			detail = installError;
 			state = State::Failed;
 		}
 	}
 	else
 	{
-		message = "The downloaded file is not a skin, texture pack or mod";
+		message = uiText("The downloaded file is not a skin, texture pack or mod");
 		detail = scannedUrl;
 		state = State::Failed;
 	}
@@ -584,10 +584,10 @@ void GuiQrDownload::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 		const int_t previewH = 150;
 		drawPreview(centreX - previewW / 2, 30, previewW, previewH);
 		if (DsQrScanner::hasReceivedFrame())
-			drawCenteredString(fontRenderer, "Point the back camera at a QR code",
+			drawCenteredString(fontRenderer, uiText("Point the back camera at a QR code"),
 			                   centreX, height - 58, 0xAAAAAA);
 		else
-			drawCenteredString(fontRenderer, "Waiting for camera frames...",
+			drawCenteredString(fontRenderer, uiText("Waiting for camera frames..."),
 			                   centreX, height - 58, 0xFF5555);
 		break;
 	}
@@ -623,14 +623,14 @@ void GuiQrDownload::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 			                       formatBytes(download.totalBytes()),
 			                   centreX, 78, 0xCCCCCC);
 		else
-			drawCenteredString(fontRenderer, formatBytes(download.receivedBytes()) + " received",
+			drawCenteredString(fontRenderer, formatBytes(download.receivedBytes()) + uiText(" received"),
 			                   centreX, 78, 0xCCCCCC);
 		break;
 	}
 
 	case State::Installing:
-		drawCenteredString(fontRenderer, "Installing...", centreX, 48, 0xFFFFFF);
-		drawCenteredString(fontRenderer, "(a few seconds)", centreX, 64, 0x888888);
+		drawCenteredString(fontRenderer, uiText("Installing..."), centreX, 48, 0xFFFFFF);
+		drawCenteredString(fontRenderer, uiText("(a few seconds)"), centreX, 64, 0x888888);
 		break;
 
 	case State::Done:

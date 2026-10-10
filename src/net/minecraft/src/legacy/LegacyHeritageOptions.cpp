@@ -36,6 +36,9 @@ constexpr int_t BUTTON_LEGACY_CREATIVE = 609;
 // The auto-jump toggle lives in both options screens on every platform
 // (GuiOptiCraftOptions is the non-legacy twin).
 constexpr int_t BUTTON_AUTO_JUMP = 613;
+// The toggle-sneak option (see GameSettings::toggleShift): available on all
+// platforms, not just 3DS. It lets players hold sneak by pressing the key once.
+constexpr int_t BUTTON_TOGGLE_SHIFT = 614;
 #if defined(CTR_PLATFORM)
 // The face-button camera toggle lives in both options screens (this legacy
 // one is the screen the 3DS actually shows). The dual-screen HUD toggles
@@ -43,8 +46,7 @@ constexpr int_t BUTTON_AUTO_JUMP = 613;
 constexpr int_t BUTTON_FACE_CAMERA = 610;
 constexpr int_t BUTTON_TOUCH_MAP = 611;
 constexpr int_t BUTTON_TOUCH_COORDS = 612;
-constexpr int_t BUTTON_POCKET_TOUCH = 614;
-constexpr int_t BUTTON_TOGGLE_SHIFT = 615;
+constexpr int_t BUTTON_POCKET_TOUCH = 615;
 // The dual-screen HUD side swap (GameSettings::touchHudSwap), the legacy
 // twin of GuiOptiCraftOptions' BUTTON_TOUCH_HUD_SWAP.
 constexpr int_t BUTTON_TOUCH_HUD_SWAP = 616;
@@ -56,10 +58,10 @@ LegacyHeritageOptions::LegacyHeritageOptions(GuiScreen *parent, GameSettings *se
     LegacyOptionsBackgroundMode backgroundModeValue)
     : LegacyOptionsScreen(parent, settingsValue, backgroundModeValue), nameField(nullptr), legacyUiCheckbox(nullptr),
       legacyLookCheckbox(nullptr), legacyCraftingCheckbox(nullptr), legacyCreativeCheckbox(nullptr),
-      alternativeControlsCheckbox(nullptr), autoJumpCheckbox(nullptr)
+      alternativeControlsCheckbox(nullptr), autoJumpCheckbox(nullptr), toggleShiftCheckbox(nullptr)
 #if defined(CTR_PLATFORM)
       , faceCameraCheckbox(nullptr), touchMapCheckbox(nullptr), touchCoordsCheckbox(nullptr),
-      pocketTouchCheckbox(nullptr), toggleShiftCheckbox(nullptr), touchHudSwapCheckbox(nullptr)
+      pocketTouchCheckbox(nullptr), touchHudSwapCheckbox(nullptr)
 #endif
 {
 }
@@ -90,7 +92,7 @@ void LegacyHeritageOptions::initGui()
     // them grow the panel.
     rowCount += 2;
 #else
-    // Auto Jump (every platform outside the 3DS pairing): its own row.
+    // Auto Jump + Toggle Shift share a row on non-3DS platforms.
     ++rowCount;
 #endif
 #if PLATFORM_HAS_CONTROLLER_CALIBRATION
@@ -187,11 +189,15 @@ void LegacyHeritageOptions::initGui()
         uiText("Legacy Creative"), settings->legacyCreative);
     controlList.push_back(legacyCreativeCheckbox);
 
-    // Auto Jump: its own row on every platform but the 3DS, which pairs it
-    // into the Legacy Creative row above.
-    autoJumpCheckbox = new LegacyOptionCheckbox(BUTTON_AUTO_JUMP, x, legacyLayout.rowY(row++), w, h,
+    // Auto Jump + Toggle Shift share a row on non-3DS platforms.
+    constexpr int_t PAIR_GAP_HALF = 16;
+    const int_t halfColW = std::max<int_t>(48, (w - PAIR_GAP_HALF) / 2);
+    autoJumpCheckbox = new LegacyOptionCheckbox(BUTTON_AUTO_JUMP, x, legacyLayout.rowY(row), halfColW, h,
         uiText("Auto Jump"), settings->autoJump);
     controlList.push_back(autoJumpCheckbox);
+    toggleShiftCheckbox = new LegacyOptionCheckbox(BUTTON_TOGGLE_SHIFT, x + halfColW + PAIR_GAP_HALF,
+        legacyLayout.rowY(row++), halfColW, h, uiText("Toggle Shift"), settings->toggleShift);
+    controlList.push_back(toggleShiftCheckbox);
 #endif
 
 #if defined(CTR_PLATFORM)
@@ -397,14 +403,6 @@ void LegacyHeritageOptions::actionPerformed(GuiButton *button)
             pocketTouchCheckbox->setChecked(settings->pocketTouch);
         return;
     }
-    if (button->id == BUTTON_TOGGLE_SHIFT)
-    {
-        settings->toggleShift = !settings->toggleShift;
-        if (toggleShiftCheckbox != nullptr)
-            toggleShiftCheckbox->setChecked(settings->toggleShift);
-        settings->saveOptions();
-        return;
-    }
     if (button->id == BUTTON_TOUCH_HUD_SWAP)
     {
         settings->touchHudSwap = !settings->touchHudSwap;
@@ -414,6 +412,16 @@ void LegacyHeritageOptions::actionPerformed(GuiButton *button)
         return;
     }
 #endif
+
+    // Toggle Shift: available on all platforms.
+    if (button->id == BUTTON_TOGGLE_SHIFT)
+    {
+        settings->toggleShift = !settings->toggleShift;
+        if (toggleShiftCheckbox != nullptr)
+            toggleShiftCheckbox->setChecked(settings->toggleShift);
+        settings->saveOptions();
+        return;
+    }
 
 #ifdef WII_PLATFORM
     if (button->id == BUTTON_ALTERNATIVE_CONTROLS)

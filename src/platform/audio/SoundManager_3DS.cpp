@@ -506,6 +506,22 @@ CachedSample *getDecodedSfx(const std::string &path)
 	return &entry;
 }
 
+// The channel probe for the SFX pool: a channel whose queue still holds a
+// QUEUED (accepted, not yet started) node is NOT free -- ndspChnIsPlaying
+// only reports PLAYING, so re-arming onto it memset+s re-adds a live node and
+// wedges the DSP queue (the state where every later sound plays as pitched
+// garbage until the console restarts ndsp). Drives the cache scan below.
+bool channelHoldsLiveWaveBuf(int channel)
+{
+	for (const auto &pair : s_sfxCache)
+	{
+		const ndspWaveBuf &node = pair.second.wave[channel];
+		if (node.status == NDSP_WBUF_QUEUED || node.status == NDSP_WBUF_PLAYING)
+			return true;
+	}
+	return false;
+}
+
 int nextSfxChannel()
 {
 	const int usable = CTR_SFX_CHANNEL_COUNT - CTR_SFX_FIRST_CHANNEL;
@@ -514,6 +530,8 @@ int nextSfxChannel()
 		const int channel = CTR_SFX_FIRST_CHANNEL +
 			((s_nextSfxChannel - CTR_SFX_FIRST_CHANNEL + offset) % usable);
 		if (ndspChnIsPlaying(channel))
+			continue;
+		if (channelHoldsLiveWaveBuf(channel)) // QUEUED counts as busy; see above
 			continue;
 		s_nextSfxChannel = channel + 1;
 		if (s_nextSfxChannel >= CTR_SFX_CHANNEL_COUNT)
@@ -1277,5 +1295,25 @@ void dsStopMusicStreamAtExit()
 	// ndsp down, and ndspExit() is refcounted, so this is an early return.
 	aptDspWakeup();
 	ndspExit();
+#endif
+}
+
+// Called from aptStateHook (3ds/lwjgl/Display_3ds.cpp) on the lid-close
+// ONSLEEP and the HOME-park ONSUSPEND: the DSP must not ride a sleep
+// transition with queued wave buffers. The wake side of libctru's sleep
+// handshake does not restore channel queues to a sane state -- a channel can
+// come back emitting its stale block as a held pitched tone, which reads as
+// the "after long sessions the audio degrades into beeping and only a game
+// restart fixes it" report (the lid close within the session). Clear every
+// channel and stop the stream before the system commits to sleep; the random
+// music timer re-arms the next track on its own after resume.
+void dsAudioStandDownForSleep()
+{
+#if !defined(NO_SOUND)
+	// stopStream() early-outs when nothing is playing; the channel clears are
+	// the same unconditional sweep closeMinecraft() performs.
+	stopStream();
+	for (int channel = 0; channel < CTR_SFX_CHANNEL_COUNT; ++channel)
+		ndspChnWaveBufClear(channel);
 #endif
 }

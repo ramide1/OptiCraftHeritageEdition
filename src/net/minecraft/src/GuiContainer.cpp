@@ -178,7 +178,15 @@ void GuiContainer::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 #if defined(PS2_PLATFORM) || defined(WII_PLATFORM) || defined(CTR_PLATFORM)
 	ContainerSlotNavigator &navigator = ContainerSlotNavigator::instance(getOwnerPlayerIndex());
 	Slot *controllerSlot = nullptr;
-	if (mc->gameSettings != nullptr && mc->gameSettings->legacyUI)
+	// 3DS: the container navigator must be enabled even in normal GUI mode
+	// so dpad/buttons navigate the slots (touch is not enough). On other
+	// consoles it stays legacy-only because the Java GUI there is desktop-like.
+#if defined(CTR_PLATFORM)
+	const bool useContainerNavigator = true;
+#else
+	const bool useContainerNavigator = (mc->gameSettings != nullptr && mc->gameSettings->legacyUI);
+#endif
+	if (useContainerNavigator)
 	{
 		ContainerSlotNavigator::Layout navigation;
 		navigation.guiLeft = guiX;
@@ -444,8 +452,15 @@ void GuiContainer::mouseClicked(int_t x, int_t y, int_t button)
 	// Console confirm buttons are exposed both as controller input and mouse
 	// clicks. When D-pad selection owns the inventory (and the user is not pointing
 	// with a hardware pointer like the Wii remote IR sensor), ignore the synthesized
-	// mouse edge so the selected slot is activated exactly once.
-	if (!pointerActive && !mc->isSplitScreenActive() && mc != nullptr && mc->gameSettings != nullptr && mc->gameSettings->legacyUI
+	// mouse edge so the selected slot is activated exactly once. On 3DS this is
+	// unconditional because the navigator drives the container both in legacy and
+	// normal GUI mode.
+#if defined(CTR_PLATFORM)
+	const bool useNavigator = true;
+#else
+	const bool useNavigator = (mc->gameSettings != nullptr && mc->gameSettings->legacyUI);
+#endif
+	if (mc != nullptr && !pointerActive && !mc->isSplitScreenActive() && useNavigator
 	    && navigator.controllerSelectionActive() && (button == 0 || button == 1))
 		return;
 	Slot *controllerSlot = nullptr;

@@ -45,7 +45,11 @@ void GuiScreenAddServer::initGui()
     delete serverAddress;
     serverName = new GuiTextField(this, fontRenderer, width / 2 - 100, 76, 200, 20,
                                   serverNBTStorage != nullptr ? serverNBTStorage->name : "");
+#ifndef CTR_PLATFORM
+    // Vanilla focuses the name field at open; on 3DS that auto-focus opens the
+    // software keyboard over the add-server screen, so consoles skip it.
     serverName->setFocused(true);
+#endif
     serverAddress = new GuiTextField(this, fontRenderer, width / 2 - 100, 116, 200, 20,
                                      serverNBTStorage != nullptr ? serverNBTStorage->host : "");
     serverAddress->setMaxStringLength(128);

@@ -90,6 +90,7 @@
 #include "BlockWorkbench.h"
 #include "EntityItem.h"
 #include "EntityPlayer.h"
+#include "EntityXPOrb.h"
 #include "EnchantmentHelper.h"
 #include "IBlockAccess.h"
 #include "Item.h"
@@ -756,7 +757,8 @@ void Block::harvestBlock(World *world, EntityPlayer *entityplayer, int_t i, int_
 
 	entityplayer->addStat(StatList::mineBlockStatArray[blockID], 1);
 	entityplayer->addExhaustion(0.025f);
-	if (func_50074_q() && EnchantmentHelper::getSilkTouchModifier(entityplayer->inventory))
+	bool silkTouch = func_50074_q() && EnchantmentHelper::getSilkTouchModifier(entityplayer->inventory);
+	if (silkTouch)
 	{
 		ItemStack *stack = createStackedBlock(l);
 		if (stack != nullptr)
@@ -767,6 +769,28 @@ void Block::harvestBlock(World *world, EntityPlayer *entityplayer, int_t i, int_
 		const int_t fortune = EnchantmentHelper::getFortuneModifier(entityplayer->inventory);
 		dropBlockAsItem(world, i, j, k, l, fortune);
 	}
+
+	// Spawn XP orbs for blocks that drop XP (like ores)
+	if (!silkTouch && !world->multiplayerWorld)
+	{
+		const int_t fortune = EnchantmentHelper::getFortuneModifier(entityplayer->inventory);
+		int_t exp = getExpDrop(world, l, fortune);
+		while (exp > 0)
+		{
+			const int_t split = EntityXPOrb::getXPSplit(exp);
+			exp -= split;
+			EntityXPOrb *orb = new EntityXPOrb(world, static_cast<double>(i) + 0.5, static_cast<double>(j) + 0.5, static_cast<double>(k) + 0.5, split);
+			world->spawnEntityInWorld(orb);
+		}
+	}
+}
+
+int_t Block::getExpDrop(IBlockAccess *iblockaccess, int_t metadata, int_t fortune)
+{
+    (void)iblockaccess;
+    (void)metadata;
+    (void)fortune;
+    return 0;
 }
 
 bool Block::canBlockStay(World *world, int_t i, int_t j, int_t k)

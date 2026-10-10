@@ -22,6 +22,7 @@ public:
 
     bool isAchievement() override;
     std::string getDescription();
+    void refreshTranslationFromId();
     Achievement* setStatStringFormatter(IStatStringFormat *formatter);
     bool getSpecial();
     StatBase* registerStat() override;
@@ -31,6 +32,10 @@ public:
     const int_t displayRow;
     Achievement *parentAchievement;
     ItemStack *theItemStack;
+
+    // The raw achievement id (e.g. "openInventory"), for re-translation
+    // when the language changes after startup.
+    std::string achievementId;
 
 private:
     std::string achievementDescription;

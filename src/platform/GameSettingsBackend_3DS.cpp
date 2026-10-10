@@ -66,15 +66,24 @@ void platformGameSettingsResetControlBindings(GameSettings& settings) { applyDef
 // displayWorkbenchGUI), so there is nothing to rebind -- a no-op, as on Wii.
 void platformGameSettingsApplyLegacyCrafting(GameSettings&) {}
 
-// The tuning half mirrors the PS2 file: both are fixed-grid bounded-world
-// consoles, so the render-distance surface is whatever the PLATFORM_* tuning
-// table implies -- a single default distance (Cycle and Clamp are pinned to
-// it), the fine distance clamped to the visible chunk radius, and no
-// post-cycle writeback.
+// The tuning half mirrors the PS2 file with one exception: the render distance
+// is user-selectable between TINY (the default floor profile) and SHORT (the
+// visibility cap, radius 4). Cycle wraps inside that pair and Clamp saturates
+// any foreign options.txt value into it; anything coarser (each index below
+// SHORT) grows the renderer grid past what the ARM11 holds.
 int_t platformGameSettingsDefaultChunkUpdates() { return static_cast<int_t>(PLATFORM_MAX_RENDERER_UPDATES_PER_FRAME); }
 int_t platformGameSettingsDefaultConnectedTextures() { return 3; }
-int_t platformGameSettingsCycleRenderDistance(int_t, int_t) { return PLATFORM_DEFAULT_RENDER_DISTANCE; }
-int_t platformGameSettingsClampRenderDistance(int_t) { return PLATFORM_DEFAULT_RENDER_DISTANCE; }
+int_t platformGameSettingsCycleRenderDistance(int_t current, int_t delta)
+{
+    int_t next = current + delta;
+    if (next < 2) next = 3;
+    else if (next > 3) next = 2;
+    return next;
+}
+int_t platformGameSettingsClampRenderDistance(int_t value)
+{
+    return value < 2 ? 2 : (value > 3 ? 3 : value);
+}
 int_t platformGameSettingsClampFineRenderDistance(int_t value)
 {
 	return value < 32 ? 32 : (value > PLATFORM_VISIBLE_CHUNK_RADIUS * 16 ? PLATFORM_VISIBLE_CHUNK_RADIUS * 16 : value);

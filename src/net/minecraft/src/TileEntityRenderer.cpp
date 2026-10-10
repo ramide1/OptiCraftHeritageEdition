@@ -132,6 +132,10 @@ void TileEntityRenderer::renderTileEntity(TileEntity *tileentity, float f)
         const int_t lightV = brightness / 65536;
         OpenGlHelper::setLightmapTextureCoords(
             OpenGlHelper::lightmapTexUnit, (float)lightU, (float)lightV);
+        // Vanilla 1.2.5 leaves the colour white: the lightmap pair set above
+        // is what dims chests and signs by the block's light. Multiplying a
+        // brightness float through the vertex colour on top of that would
+        // double the dimming.
         renderColor4f(1.0f, 1.0f, 1.0f, 1.0f);
         renderTileEntityAt(tileentity,
             (double)tileentity->xCoord - staticPlayerX,

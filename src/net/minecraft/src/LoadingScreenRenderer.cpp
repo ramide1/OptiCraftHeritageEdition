@@ -1,5 +1,6 @@
 #include "LoadingScreenRenderer.h"
 #include "UiStrings.h"
+#include "StringTranslate.h"
 
 #include <algorithm>
 #include "FontRenderer.h"
@@ -92,7 +93,9 @@ void drawLegacyLoadingProgress(Minecraft *mc, int_t width, int_t height, int_t p
 
     if (font != nullptr)
     {
-        static const std::string heading = "Initializing world";
+        // It's an English UI label, not a .lang key: uiText so the Spanish
+        // fallback applies (translateKey returns it untouched).
+        const std::string heading = uiText("Initializing world");
         constexpr float_t headingScale = 2.5f;
         const float_t headingWidth = static_cast<float_t>(font->getStringWidth(heading)) * headingScale;
         const float_t headingX = static_cast<float_t>(centerX) - headingWidth * 0.5f;

@@ -37,6 +37,12 @@
 #include "client/Minecraft.h"
 #include "net/minecraft/src/GuiScreen.h"
 
+// Lives in platform/audio/SoundManager_3DS.cpp: clears every ndsp channel and
+// stops the stream so the DSP sleeps with empty queues. Idempotent. This is
+// deliberately at file scope: inside the anonymous namespace below the
+// declaration would get internal linkage and never see the definition.
+void dsAudioStandDownForSleep();
+
 namespace
 {
 // Fixed top-screen geometry: every 3DS model is 400x240, so this is a
@@ -94,7 +100,15 @@ void aptStateHook(APT_HookType hook, void *)
 	// bring it back; a library-applet return deliberately never fires
 	// ONRESTORE (APTCMD_WAKEUP), which the dsInputPoll re-arm covers anyway.
 	if (hook == APTHOOK_ONSLEEP || (hook == APTHOOK_ONSUSPEND && !dsSwkbdActive()))
+	{
 		DsCirclePadPro::shutdown(); // idempotent; New 3DS never runs the worker
+		// Same sleep-transition rule for the DSP: no queued ndsp wave buffers
+		// may ride it -- wake does not restore them and the channel comes back
+		// holding a stale block as a stuck pitched tone (the long-session
+		// "audio degrades into beeping" report). Gameplay re-arms music through
+		// the normal random-music timer after resume.
+		dsAudioStandDownForSleep();
+	}
 	else if (hook == APTHOOK_ONWAKEUP || hook == APTHOOK_ONRESTORE)
 		DsCirclePadPro::init();      // likewise idempotent; New 3DS early-outs
 

@@ -63,6 +63,12 @@ public:
 	static int_t getAnisotropicFilterLevel();
 	static bool isCustomFonts();
 	static int_t getMaxRenderDistanceFine();
+	// Live bounded-cache radii: identical to the static PLATFORM_CACHE/UNLOAD
+	// knobs on profiles with a pinned render distance; on the 3DS, where the
+	// user can raise the view distance, they follow the live fine distance so
+	// the resident window still covers the rendered ring.
+	static int_t getActiveChunkCacheRadius();
+	static int_t getActiveChunkUnloadRadius();
 	static int_t getRenderDistanceFine();
 	static int_t getIconWidthTerrain();
 	static int_t getIconWidthItems();

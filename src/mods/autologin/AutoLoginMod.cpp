@@ -5,6 +5,7 @@
 #include "net/minecraft/src/GuiButton.h"
 #include "net/minecraft/src/GuiScreen.h"
 #include "net/minecraft/src/GuiTextField.h"
+#include "net/minecraft/src/UiStrings.h"
 #include "pc/lwjgl/Keyboard.h"
 #include "platform/Log.h"
 #include "platform/PlatformCompat.h"
@@ -76,7 +77,7 @@ public:
 		m_passwordField->setMaxStringLength(64);
 		m_passwordField->setFocused(true);
 
-		controlList.push_back(new GuiButton(0, width / 2 - 100, height / 4 + 96, 200, 20, "Done"));
+		controlList.push_back(new GuiButton(0, width / 2 - 100, height / 4 + 96, 200, 20, uiText("Done")));
 	}
 
 	void updateScreen() override
@@ -146,11 +147,11 @@ public:
 	void drawScreen(int_t mouseX, int_t mouseY, float_t partialTick) override
 	{
 		drawDefaultBackground();
-		drawCenteredString(fontRenderer, "Auto-Login Settings", width / 2, height / 4 - 40, 0xFFFFFF);
-		drawString(fontRenderer, "Server password:", width / 2 - 100, height / 4 + 28, 0xA0A0A0);
+		drawCenteredString(fontRenderer, uiText("Auto-Login Settings"), width / 2, height / 4 - 40, 0xFFFFFF);
+		drawString(fontRenderer, uiText("Server password:"), width / 2 - 100, height / 4 + 28, 0xA0A0A0);
 		if (m_passwordField != nullptr)
 			m_passwordField->drawTextBox();
-		drawCenteredString(fontRenderer, std::string("\xc2\xa7") + "7Sent as /login and /register when the server asks",
+		drawCenteredString(fontRenderer, std::string("\xc2\xa7") + "7" + uiText("Sent as /login and /register when the server asks"),
 		                   width / 2, height / 4 + 70, 0x888888);
 		GuiScreen::drawScreen(mouseX, mouseY, partialTick);
 	}

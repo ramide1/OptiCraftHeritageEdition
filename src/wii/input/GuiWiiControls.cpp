@@ -5,6 +5,7 @@
 #include "net/minecraft/src/GameSettings.h"
 #include "net/minecraft/src/GuiButton.h"
 #include "net/minecraft/src/Minecraft.h"
+#include "net/minecraft/src/UiStrings.h"
 #include "platform/Input.h"
 #include "wii/input/WiiPadKeyCodes.h"
 
@@ -154,7 +155,7 @@ void GuiWiiControls::initGui()
 		}
 	}
 
-	controlList.push_back(new GuiButton(100, width / 2 - 35, rowStartY + ACTION_COUNT * rowSpacing + 14, 70, 20, "Done"));
+	controlList.push_back(new GuiButton(100, width / 2 - 35, rowStartY + ACTION_COUNT * rowSpacing + 14, 70, 20, uiText("Done")));
 }
 
 void GuiWiiControls::actionPerformed(GuiButton *button)
@@ -217,7 +218,7 @@ void GuiWiiControls::keyTyped(char_t c, int_t key)
 void GuiWiiControls::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 {
 	drawDefaultBackground();
-	drawCenteredString(fontRenderer, "Wii Pad Bindings", width / 2, 20, 0xffffff);
+	drawCenteredString(fontRenderer, uiText("Wii Pad Bindings"), width / 2, 20, 0xffffff);
 
 	const int_t colWidth = 70, colGap = 10;
 	const int_t startX = width / 2 - (colWidth * FAMILY_COUNT + colGap * (FAMILY_COUNT - 1)) / 2;

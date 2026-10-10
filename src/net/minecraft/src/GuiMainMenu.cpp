@@ -356,7 +356,7 @@ void GuiMainMenu::initGui()
     controlList.push_back(new GuiButton(1, width / 2 - 100, y, tr->translateKey("menu.singleplayer")));
     controlList.push_back(multiplayerButton = new GuiButton(2, width / 2 - 100, y + 24, tr->translateKey("menu.multiplayer")));
     controlList.push_back(new GuiButton(3, width / 2 - 100, y + 48, uiText("Mods")));
-    controlList.push_back(new GuiButton(6, width / 2 - 100, y + 72, "Skins"));
+    controlList.push_back(new GuiButton(6, width / 2 - 100, y + 72, uiText("Skins")));
 #if PLATFORM_3DS
     // Below the options row: the legacy column is this port's real menu on
     // the 3DS, so this Java-style row only has to exist and fit the panel.

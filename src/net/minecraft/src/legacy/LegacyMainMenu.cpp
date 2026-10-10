@@ -28,7 +28,7 @@ void legacyCreateMainMenuButtons(std::vector<GuiButton *> &controlList, GuiButto
     addButton(1, uiText("Play Game"));
     multiplayerButton = addButton(2, tr->translateKey("menu.multiplayer"));
     addButton(3, uiText("Mods"));
-    addButton(6, "Skins");
+    addButton(6, uiText("Skins"));
 #if PLATFORM_3DS
     // The 3DS's own entry: scan a QR code with the back camera and download
     // skins, texture packs or mods straight onto the SD card

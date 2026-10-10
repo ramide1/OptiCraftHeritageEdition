@@ -31,8 +31,14 @@ GuiAchievement::~GuiAchievement()
 
 void GuiAchievement::queueTakenAchievement(Achievement *achievement)
 {
+	if (achievement != nullptr)
+    {
+        // Re-translate name/description so language changes after startup apply.
+        if (!achievement->achievementId.empty())
+            achievement->refreshTranslationFromId();
+        field_25084_e = achievement->statName;
+    }
 	field_25085_d = StatCollector::translateToLocal("achievement.get");
-	field_25084_e = achievement->statName;
 	field_25083_f = System::currentTimeMillis();
 	theAchievement = achievement;
 	field_27103_i = false;
@@ -40,8 +46,14 @@ void GuiAchievement::queueTakenAchievement(Achievement *achievement)
 
 void GuiAchievement::queueAchievementInformation(Achievement *achievement)
 {
-	field_25085_d = achievement->statName;
-	field_25084_e = achievement->getDescription();
+	if (achievement != nullptr)
+    {
+        // Re-translate name/description so language changes after startup apply.
+        if (!achievement->achievementId.empty())
+            achievement->refreshTranslationFromId();
+        field_25085_d = achievement->statName;
+        field_25084_e = achievement->getDescription();
+    }
 	field_25083_f = JavaArithmetic::longSub(System::currentTimeMillis(), 2500LL);
 	theAchievement = achievement;
 	field_27103_i = true;

@@ -85,19 +85,19 @@ void GuiIngameMenu::initGui()
 	}
 
 	int_t off = -16;
-	controlList.push_back(new GuiButton(1, width / 2 - 100, height / 4 + 120 + off, StatCollector::translateToLocal("menu.returnToMenu")));
-	if (mc->isMultiplayerWorld())
-		controlList[0]->displayString = StatCollector::translateToLocal("menu.disconnect");
+	// Vanilla 1.2.5 order: Resume, Options, Achievements, Statistics, Save & Quit
 	controlList.push_back(new GuiButton(4, width / 2 - 100, height / 4 + 24 + off, StatCollector::translateToLocal("menu.returnToGame")));
-	controlList.push_back(new GuiButton(0, width / 2 - 100, height / 4 + 96 + off, StatCollector::translateToLocal("menu.options")));
+	controlList.push_back(new GuiButton(0, width / 2 - 100, height / 4 + 72 + off, StatCollector::translateToLocal("menu.options")));
 	controlList.push_back(new GuiButton(5, width / 2 - 100, height / 4 + 48 + off, 98, 20, StatCollector::translateToLocal("gui.achievements")));
 	controlList.push_back(new GuiButton(6, width / 2 + 2,   height / 4 + 48 + off, 98, 20, StatCollector::translateToLocal("gui.stats")));
 #if defined(CTR_PLATFORM)
 	// 3DS-only: F3 has no physical key here, so the debug screen needs a menu
-	// entry. The +72 row sits empty in the vanilla layout (24/48/96/120 are
-	// taken), so no other button moves.
-	controlList.push_back(new GuiButton(7, width / 2 - 100, height / 4 + 72 + off, uiText("Debug Options")));
+	// entry. Place it between Options and Achievements at y=60 (between 48 and 72)
+	controlList.push_back(new GuiButton(7, width / 2 - 100, height / 4 + 60 + off, uiText("Debug Options")));
 #endif
+	controlList.push_back(new GuiButton(1, width / 2 - 100, height / 4 + 96 + off, StatCollector::translateToLocal("menu.returnToMenu")));
+	if (mc->isMultiplayerWorld())
+		controlList[5]->displayString = StatCollector::translateToLocal("menu.disconnect");
 }
 
 
@@ -307,7 +307,7 @@ void GuiIngameMenu::drawScreen(int_t mouseX, int_t mouseY, float_t partialTick)
 
 		const LegacyMainMenuLayout layout = legacyMainMenuLayout(width, height, legacyPauseButtonCount());
 		if (!legacyDrawTitleTexture(mc, layout, width, zLevel, nullptr))
-			drawCenteredString(fontRenderer, "HERITAGE EDITION", width / 2, layout.titleY + 8, 0xffffff);
+			drawCenteredString(fontRenderer, uiText("HERITAGE EDITION"), width / 2, layout.titleY + 8, 0xffffff);
 
 		bool saving = !mc->theWorld->isSafeToSave(updateCounter2++);
 		if (saving || updateCounter < 20)
